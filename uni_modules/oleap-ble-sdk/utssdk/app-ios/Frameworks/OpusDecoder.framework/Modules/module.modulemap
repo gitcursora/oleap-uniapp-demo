@@ -1,0 +1,11 @@
+framework module OpusDecoder {
+  umbrella header "OpusDecoder.h"
+
+  export *
+  module * { export * }
+}
+
+module OpusDecoder.Swift {
+  header "OpusDecoder-Swift.h"
+  requires objc
+}

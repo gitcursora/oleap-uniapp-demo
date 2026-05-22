@@ -1,6 +1,6 @@
 # Oleap UniApp BLE SDK API
 
-状态：Phase 0 API 契约稳定；Android UTS 已接入扫描、连接、notify/write transport、控制协议、实时录音 OPUS 落盘、Flash 离线文件下载和 WAV/MP3 finalize。iOS UTS 已接入 CoreBluetooth host/control 与实时录音协议第一切片，iOS WAV/MP3 文件输出和 Flash 文件输出待后续 P5 切片。
+状态：Phase 0 API 契约稳定；Android UTS 已接入扫描、连接、notify/write transport、控制协议、实时录音 OPUS 落盘、Flash 离线文件下载和 WAV/MP3 finalize。iOS UTS 已接入 CoreBluetooth host/control、实时录音协议、OPUS 落盘和 WAV/MP3 decoder，iOS Flash 文件输出待后续 P5 切片。
 
 ## 导入
 
@@ -61,7 +61,7 @@ const result = await OleapBle.stopRecording({
 })
 ```
 
-`scene` 当前可传 `meeting`、`call`、`media`、`ambient`；`format` 当前支持 `wav` 和 `mp3`。Android native 当前已能完成 start/stop、OPUS 帧切分、临时文件落盘和 WAV/MP3 输出。当前 Android decoder 使用 `*.oleapframes` 作为输入，要求帧布局为 `4B header + 80B OPUS payload`、单声道、16kHz；不满足时会明确返回 `opus_decoder_frame_layout_unsupported` 或 `opus_decoder_channels_unsupported`。iOS native 当前已接入 start/stop、OPUS notify 帧切分、丢包统计和 `.opusraw`/`.oleapframes` 落盘；停止录音后如请求 `wav`/`mp3`，会明确返回 `ios_audio_decode_not_ready`，错误详情包含临时 OPUS 文件路径，不会伪装成功。
+`scene` 当前可传 `meeting`、`call`、`media`、`ambient`；`format` 当前支持 `wav` 和 `mp3`。Android native 当前已能完成 start/stop、OPUS 帧切分、临时文件落盘和 WAV/MP3 输出。当前 Android decoder 使用 `*.oleapframes` 作为输入，要求帧布局为 `4B header + 80B OPUS payload`、单声道、16kHz；不满足时会明确返回 `opus_decoder_frame_layout_unsupported` 或 `opus_decoder_channels_unsupported`。iOS native 当前已接入 start/stop、OPUS notify 帧切分、丢包统计、`.opusraw`/`.oleapframes` 落盘和 `OpusDecoder.framework` WAV/MP3 输出；iOS decoder 当前同样要求 `*.oleapframes` 为 `4B header + 80B OPUS payload`、单声道、16kHz，不满足时会明确返回 `opus_decoder_frame_layout_unsupported` 或 `opus_decoder_channels_unsupported`。decoder 返回负值或输出为空时会明确返回 `opus_decode_failed` / `opus_decode_empty_output`，不会伪装成功。
 
 返回：
 

@@ -1,6 +1,6 @@
 # Oleap UniApp BLE SDK Implementation Plan
 
-状态：v0.5，Android P0-P4 已推进到静态与 fixture 可验收；iOS P5 host/control 与实时录音协议第一切片已推进
+状态：v0.6，Android P0-P4 已推进到静态与 fixture 可验收；iOS P5 host/control、实时录音协议和 WAV/MP3 decoder 第一切片已推进
 目标项目：`oleap-uniapp-demo`  
 目标 SDK：`uni_modules/oleap-ble-sdk`  
 目标形态：普通 `uni-app` 教学 Demo + UTS 插件标准 SDK，预留 `uni-app x` 兼容

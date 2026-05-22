@@ -1,7 +1,8 @@
 import { CBCentralManager, CBCentralManagerDelegate, CBPeripheral, CBPeripheralDelegate, CBService, CBCharacteristic, CBUUID, CBManagerState, CBCharacteristicWriteType, CBAdvertisementDataLocalNameKey, CBAdvertisementDataManufacturerDataKey } from 'CoreBluetooth'
 import { Data, DispatchQueue, NSError, NSNumber, NSObject, FileHandle, FileManager, URL } from 'Foundation'
 import { UTSiOS } from 'DCloudUTSFoundation'
-import { UInt8 } from 'Swift'
+import { opus2wav, opus2mp3 } from 'OpusDecoder'
+import { UInt8, Int } from 'Swift'
 import { OleapBleNativeError } from '../unierror.uts'
 
 type NativeDeviceFoundCallback = (device: any) => void
@@ -10,7 +11,7 @@ type NativeDpCallback = (event: any) => void
 type NativeProgressCallback = (event: any) => void
 type NativeErrorCallback = (event: any) => void
 
-const SDK_VERSION = '0.1.0-p5-ios-recording'
+const SDK_VERSION = '0.1.0-p5-ios-decoder'
 const OLEAP_NAME_PREFIX = 'Oleap'
 const DIAGNOSTIC_LIMIT = 500
 const DEFAULT_SCAN_TIMEOUT_MS = 8000
@@ -65,7 +66,9 @@ const RECORDING_COMMAND_SCENE_7 = 0x0781
 const RECORDING_RESPONSE_STOP = 0x0080
 const RECORDING_RESPONSE_START = 0x1280
 const RECORDING_FRAME_HEADER_LENGTH = 4
+const RECORDING_DECODER_FRAME_LEN = 80
 const RECORDING_SAMPLE_RATE = 16000
+const RECORDING_PCM_BITS_PER_SAMPLE = 16
 const DEFAULT_RECORDING_COMMAND_TIMEOUT_MS = 3000
 const RECORDING_PROGRESS_THROTTLE_MS = 200
 
@@ -1201,6 +1204,149 @@ function markRecordingFileWriteError(session: any, error: any): void {
   }))
 }
 
+function deleteFileSilently(path: string): void {
+  try {
+    if (path.length > 0 && FileManager.default.fileExists(atPath = path)) {
+      UTSiOS.try(FileManager.default.removeItem(atPath = path))
+    }
+  } catch (_error) {}
+}
+
+function fileSizeOf(path: string): number {
+  try {
+    if (path.length == 0 || !FileManager.default.fileExists(atPath = path)) {
+      return 0
+    }
+    const fileHandle = UTSiOS.try(FileHandle(forUpdatingAtPath = path)) as FileHandle
+    const size = fileHandle.seekToEndOfFile()
+    fileHandle.closeFile()
+    return Number(size)
+  } catch (_error) {
+    return 0
+  }
+}
+
+function recordingDecodedOutputPath(session: any, format: string): string {
+  return `${recordingOutputBasePath()}/${session.sessionId}.${format}`
+}
+
+function ensureRecordingDecodeLayout(session: any): void {
+  if (Number(session.frameCount) <= 0) {
+    throw makeError('recording_empty', '录音没有收到可解码的音频帧', 'recording', true, recordingSessionSummary(session))
+  }
+  if (Number(session.channels) != 1) {
+    throw makeError('opus_decoder_channels_unsupported', '当前 iOS decoder 仅支持单声道 OPUS', 'recording', true, recordingSessionSummary(session))
+  }
+  if (Number(session.frameLen) != RECORDING_DECODER_FRAME_LEN || session.variableFrameLen == true) {
+    throw makeError(
+      'opus_decoder_frame_layout_unsupported',
+      '当前 iOS decoder 仅支持 4B 帧头 + 80B OPUS payload 的连续帧文件',
+      'recording',
+      true,
+      recordingSessionSummary(session)
+    )
+  }
+  if (!FileManager.default.fileExists(atPath = session.framesPath)) {
+    throw makeError('opus_frame_file_missing', 'OPUS 帧诊断文件不存在，无法解码', 'recording', true, recordingSessionSummary(session))
+  }
+}
+
+function decodeResultStats(returnCode: number, session: any, outputPath: string, format: string): any {
+  if (returnCode < 0) {
+    deleteFileSilently(outputPath)
+    const summary = recordingSessionSummary(session)
+    summary.format = format
+    summary.outputPath = outputPath
+    summary.decoderReturnCode = returnCode
+    throw makeError('opus_decode_failed', 'iOS OPUS 解码失败', 'recording', true, summary)
+  }
+  const outputSize = fileSizeOf(outputPath)
+  const minimumSize = format == 'wav' ? 44 : 1
+  if (outputSize <= minimumSize) {
+    deleteFileSilently(outputPath)
+    const summary = recordingSessionSummary(session)
+    summary.format = format
+    summary.outputPath = outputPath
+    summary.decoderReturnCode = returnCode
+    summary.outputSize = outputSize
+    summary.minimumSize = minimumSize
+    throw makeError('opus_decode_empty_output', 'iOS OPUS 解码没有生成有效音频文件', 'recording', true, summary)
+  }
+  return {
+    decodedFrames: session.frameCount,
+    failedFrames: returnCode > 0 ? returnCode : 0,
+    pcmBytes: 0,
+    size: outputSize,
+    decoderReturnCode: returnCode
+  }
+}
+
+function decodeRecordingFramesToWav(session: any, outputPath: string): any {
+  let returnCode = -1
+  try {
+    returnCode = Number(opus2wav(session.framesPath, outputPath) as Int)
+  } catch (error) {
+    deleteFileSilently(outputPath)
+    const summary = recordingSessionSummary(session)
+    summary.error = `${error}`
+    throw makeError('opus_decode_failed', 'iOS OPUS WAV 解码异常', 'recording', true, summary)
+  }
+  return decodeResultStats(returnCode, session, outputPath, 'wav')
+}
+
+function decodeRecordingFramesToMp3(session: any, outputPath: string): any {
+  let returnCode = -1
+  try {
+    returnCode = Number(opus2mp3(session.framesPath, outputPath) as Int)
+  } catch (error) {
+    deleteFileSilently(outputPath)
+    const summary = recordingSessionSummary(session)
+    summary.error = `${error}`
+    throw makeError('opus_decode_failed', 'iOS OPUS MP3 解码异常', 'recording', true, summary)
+  }
+  return decodeResultStats(returnCode, session, outputPath, 'mp3')
+}
+
+function decodeRecordingSession(session: any, format: string): any {
+  ensureRecordingDecodeLayout(session)
+  const outputPath = recordingDecodedOutputPath(session, format)
+  deleteFileSilently(outputPath)
+  emitDecodeProgress({
+    sessionId: session.sessionId,
+    phase: 'decoding',
+    progress: 0
+  })
+  const decodeStats = format == 'mp3'
+    ? decodeRecordingFramesToMp3(session, outputPath)
+    : decodeRecordingFramesToWav(session, outputPath)
+  emitDecodeProgress({
+    sessionId: session.sessionId,
+    phase: 'finalizing',
+    progress: 100
+  })
+  return {
+    filePath: outputPath,
+    format,
+    durationMs: session.durationMs,
+    sampleRate: session.sampleRate,
+    channels: session.channels,
+    frameCount: session.frameCount,
+    frameLen: session.frameLen,
+    decodedFrames: decodeStats.decodedFrames,
+    failedFrames: decodeStats.failedFrames,
+    pcmBytes: decodeStats.pcmBytes,
+    lostFrames: session.lostFrames,
+    outOfOrderFrames: session.outOfOrderFrames,
+    badFrames: session.badFrames,
+    size: decodeStats.size,
+    source: session.source == null ? 'realtime' : session.source,
+    fileId: session.fileId == null ? null : session.fileId,
+    opusRawPath: session.opusRawPath,
+    framesPath: session.framesPath,
+    decoderReturnCode: decodeStats.decoderReturnCode
+  }
+}
+
 function updateRecordingIndexStats(session: any, dataIndex: number): void {
   if (session.lastIndex == null) {
     session.lastIndex = dataIndex
@@ -1363,17 +1509,29 @@ function handleRecordingStopResponse(response: any): void {
     return
   }
 
-  emitDecodeProgress({
-    sessionId: session.sessionId,
-    phase: 'ios_decoder_not_ready',
-    progress: 100,
-    framesPath: session.framesPath,
-    opusRawPath: session.opusRawPath
-  })
-  rejectRecordingCommand(
-    request,
-    makeError('ios_audio_decode_not_ready', 'iOS 已完成录音协议与 OPUS 帧落盘，WAV/MP3 解码将在后续 P5 decoder 切片接入', 'recording', false, summary)
-  )
+  try {
+    const result = decodeRecordingSession(session, request.format)
+    pushDiagnostic('recording_decode_completed', {
+      platform: 'ios',
+      sessionId: session.sessionId,
+      format: request.format,
+      filePath: result.filePath,
+      size: result.size,
+      decoderReturnCode: result.decoderReturnCode
+    })
+    completeRecordingCommand(request, result)
+  } catch (error) {
+    const maybeError = error as any
+    if (maybeError != null && maybeError.code != null && maybeError.area != null) {
+      rejectRecordingCommand(request, maybeError as OleapBleNativeError)
+      return
+    }
+    summary.error = `${error}`
+    rejectRecordingCommand(
+      request,
+      makeError('opus_decode_failed', 'iOS OPUS 解码失败', 'recording', true, summary)
+    )
+  }
 }
 
 function handleRecordNotify(bytes: Array<number>): void {

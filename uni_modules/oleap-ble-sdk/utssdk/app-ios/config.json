@@ -1,4 +1,4 @@
 {
   "deploymentTarget": "13.0",
-  "note": "P5 iOS host/control plus realtime recording protocol slice. WAV/MP3 decoder and Flash download are implemented in later P5 slices."
+  "note": "P5 iOS host/control plus realtime recording WAV/MP3 decoder slice. Flash download is implemented in a later P5 slice."
 }

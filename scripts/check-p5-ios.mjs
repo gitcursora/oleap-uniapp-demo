@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const root = resolve(new URL('..', import.meta.url).pathname)
@@ -7,6 +7,8 @@ const iosConfig = read('uni_modules/oleap-ble-sdk/utssdk/app-ios/config.json')
 const iosPlist = read('uni_modules/oleap-ble-sdk/utssdk/app-ios/info.plist')
 read('docs/phase-5-ios-host-acceptance-report.md')
 read('docs/phase-5-ios-recording-acceptance-report.md')
+const opusFrameworkBinary = 'uni_modules/oleap-ble-sdk/utssdk/app-ios/Frameworks/OpusDecoder.framework/OpusDecoder'
+const opusFrameworkHeader = read('uni_modules/oleap-ble-sdk/utssdk/app-ios/Frameworks/OpusDecoder.framework/Headers/OpusFileDecoder.h')
 
 function fail(message) {
   throw new Error(message)
@@ -50,7 +52,8 @@ for (const text of [
   'CBPeripheralDelegate',
   'CBCharacteristicWriteType',
   'CoreBluetooth',
-  '0.1.0-p5-ios-recording',
+  'OpusDecoder',
+  '0.1.0-p5-ios-decoder',
   'COMMUNICATION_SERVICE_UUID',
   'COMMUNICATION_NOTIFY_UUID',
   'COMMUNICATION_WRITE_UUID',
@@ -123,7 +126,10 @@ for (const text of [
 
 for (const text of [
   'ios_flash_not_ready',
-  'ios_audio_decode_not_ready'
+  'opus_decode_failed',
+  'opus_decode_empty_output',
+  'opus_decoder_channels_unsupported',
+  'opus_decoder_frame_layout_unsupported'
 ]) {
   mustContain(iosIndex, text, 'explicit iOS P5 boundary')
 }
@@ -155,7 +161,15 @@ for (const text of [
   'recording_session_started',
   'recording_frames_received',
   'recording_session_stopped',
-  'ios_decoder_not_ready',
+  'decodeRecordingSession',
+  'decodeRecordingFramesToWav',
+  'decodeRecordingFramesToMp3',
+  'decodeResultStats',
+  'recordingDecodedOutputPath',
+  'ensureRecordingDecodeLayout',
+  'recording_decode_completed',
+  'opus2wav',
+  'opus2mp3',
   'onRecordingProgress',
   'onDecodeProgress',
   'oleap-recordings',
@@ -169,10 +183,16 @@ mustNotContain(iosIndex, 'unsupportedPlatformError', 'unsupported platform stub 
 mustNotContain(iosIndex, 'unsupportedPromise', 'unsupported platform stub implementation')
 mustNotContain(iosIndex, 'record_notify_ignored_ios_p5', 'old iOS record notify ignore boundary')
 mustNotContain(iosIndex, 'ios_recording_not_ready', 'old iOS recording not-ready placeholder')
+mustNotContain(iosIndex, 'ios_audio_decode_not_ready', 'old iOS decoder not-ready placeholder')
+mustNotContain(iosIndex, 'ios_decoder_not_ready', 'old iOS decode progress placeholder')
 mustNotContain(iosIndex, 'toArrayBuffer', 'JS-style Data bridge in iOS native implementation')
-mustContain(iosConfig, 'realtime recording protocol slice', 'iOS config status note')
+mustContain(iosConfig, 'realtime recording WAV/MP3 decoder slice', 'iOS config status note')
 mustContain(iosPlist, 'NSBluetoothAlwaysUsageDescription', 'iOS Bluetooth always usage description')
 mustContain(iosPlist, 'NSBluetoothPeripheralUsageDescription', 'iOS Bluetooth peripheral usage description')
+mustContain(opusFrameworkHeader, 'int opus2wav', 'iOS OpusDecoder wav entrypoint')
+mustContain(opusFrameworkHeader, 'int opus2mp3', 'iOS OpusDecoder mp3 entrypoint')
+assert(existsSync(resolve(root, opusFrameworkBinary)), 'Missing iOS OpusDecoder framework binary')
+assert(statSync(resolve(root, opusFrameworkBinary)).size > 512 * 1024, 'iOS OpusDecoder framework binary looks too small')
 
 mustMatch(iosIndex, /peripheral[\s\S]+didUpdateValueFor[\s\S]+handleControlIncomingFrame/, 'iOS communication notify dispatches to control parser')
 mustMatch(iosIndex, /peripheral[\s\S]+didUpdateValueFor[\s\S]+handleRecordNotify/, 'iOS record notify dispatches to recording parser')
@@ -182,7 +202,10 @@ mustMatch(iosIndex, /didUpdateNotificationStateFor[\s\S]+notifyReadyCount[\s\S]+
 mustMatch(iosIndex, /connect\(options[\s\S]+centralManager\?\.connect\(peripheral/, 'iOS exported connect starts central connection')
 mustMatch(iosIndex, /startRecording\(options[\s\S]+buildRecordingCommand\(Number\(scene.command\), \[0\][\s\S]+writeRecordBytes\(command,\s*false\)/, 'iOS startRecording writes start command to record channel')
 mustMatch(iosIndex, /stopRecording\(options[\s\S]+buildRecordingCommand\(RECORDING_COMMAND_STOP, \[1\][\s\S]+writeRecordBytes\(command,\s*false\)/, 'iOS stopRecording writes stop command to record channel')
-mustMatch(iosIndex, /handleRecordingStopResponse[\s\S]+closeRecordingSessionStreams[\s\S]+ios_audio_decode_not_ready/, 'iOS stop response closes frames and reports decoder boundary')
+mustMatch(iosIndex, /handleRecordingStopResponse[\s\S]+closeRecordingSessionStreams[\s\S]+decodeRecordingSession/, 'iOS stop response closes frames and decodes output')
+mustMatch(iosIndex, /decodeRecordingFramesToWav[\s\S]+opus2wav\(session\.framesPath, outputPath\)/, 'iOS WAV decode uses OpusDecoder framework')
+mustMatch(iosIndex, /decodeRecordingFramesToMp3[\s\S]+opus2mp3\(session\.framesPath, outputPath\)/, 'iOS MP3 decode uses OpusDecoder framework')
+mustMatch(iosIndex, /ensureRecordingDecodeLayout[\s\S]+session\.frameLen\) != RECORDING_DECODER_FRAME_LEN[\s\S]+opus_decoder_frame_layout_unsupported/, 'iOS decoder validates 4B+80B frame layout')
 
 const crcTable = buildCrcTable()
 
@@ -247,7 +270,7 @@ assert(multiple.frames[0].dataIndex === 1, 'iOS multi frame first index mismatch
 assert(multiple.frames[1].dataIndex === 2, 'iOS multi frame second index mismatch')
 assertBytesEqual(multiple.frames[1].payload, [0xf7, 0xff, 0xfe, 0xfc], 'iOS multi frame payload mismatch')
 
-console.log('P5 iOS host/control/recording check passed')
+console.log('P5 iOS host/control/recording/decoder check passed')
 
 function readHexFixture(relativePath) {
   return read(`uni_modules/oleap-ble-sdk/test-fixtures/${relativePath}`)

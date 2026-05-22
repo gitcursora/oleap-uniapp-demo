@@ -190,8 +190,8 @@ iOS native：
 - iOS communication/record notify 订阅。
 - iOS communication/record write bridge。
 - iOS 控制协议：电量、SN、EQ、版本等查询与 EQ 写入。
-- iOS 实时录音 start/stop、OPUS notify 帧解析、丢包统计和临时文件落盘。
-- iOS 录音 WAV/MP3 解码和 Flash 文件输出。
+- iOS 实时录音 start/stop、OPUS notify 帧解析、丢包统计、临时文件落盘和 WAV/MP3 解码。
+- iOS Flash 文件输出。
 
 当前静态与 fixture 验收：
 
@@ -210,8 +210,9 @@ npm run check:p5-ios
 - iOS 电量、SN、设备名、版本、EQ、录音状态、Flash 容量、同步时间 API 接入控制协议。
 - iOS 录音命令、启动/停止响应、OPUS frame splitter 复用 Android P3 fixture 口径。
 - iOS 录音 session 能创建私有目录下的 `.opusraw` 和 `.oleapframes` 临时文件。
+- iOS `OpusDecoder.framework` 存在，`stopRecording` 可调用 `opus2wav` / `opus2mp3` 输出文件。
 - iOS 蓝牙权限文案存在。
-- iOS WAV/MP3 decoder 当前明确返回 `ios_audio_decode_not_ready`，Flash 当前明确返回 `ios_flash_not_ready`，不伪装成功。
+- iOS decoder 失败时明确返回 `opus_decode_failed` / `opus_decode_empty_output`，Flash 当前明确返回 `ios_flash_not_ready`，不伪装成功。
 - 控制协议 fixture 在 iOS P5 检查中复用，保证 DP frame 口径一致。
 - 录音协议 fixture 在 iOS P5 检查中复用，保证 start/stop/frame 口径一致。
 
@@ -221,6 +222,5 @@ npm run check:p5-ios
 - iOS 真机扫描、连接、notify/write 稳定性。
 - iOS 电量/SN/EQ 查询和主动上报 ACK。
 - iOS 实时录音 start/stop、帧落盘路径可读。
-- iOS OPUS decoder/WAV writer。
 - iOS 实时录音 WAV 可播放。
 - iOS Flash 下载 WAV/MP3 可播放。

@@ -11,7 +11,7 @@
 - Demo 页面已支持 Mock/Native 运行模式切换，默认使用 mock mode，可在没有耳机的情况下跑通页面和 API 调用链。
 - 录音页已补齐场景选择、WAV/MP3 输出选择、录音统计、解码进度、文件路径复制和转写入口。
 - P4 Android 已推进：Flash 文件数量/信息/下载/停止/安全删除、离线 OPUS 落盘和 WAV/MP3 finalize 已接入 UTS 平台层。
-- P5 iOS 已推进：CoreBluetooth host、双通道 notify/write、控制协议 smoke、实时录音 start/stop、OPUS notify 帧切分和 `.opusraw`/`.oleapframes` 落盘已接入 UTS 平台层；iOS WAV/MP3 解码和 Flash 下载在后续 P5 切片实现。
+- P5 iOS 已推进：CoreBluetooth host、双通道 notify/write、控制协议 smoke、实时录音 start/stop、OPUS notify 帧切分、`.opusraw`/`.oleapframes` 落盘和 WAV/MP3 decoder 已接入 UTS 平台层；iOS Flash 下载在后续 P5 切片实现。
 
 检查：
 

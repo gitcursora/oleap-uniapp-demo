@@ -1,0 +1,11 @@
+// swift-interface-format-version: 1.0
+// swift-compiler-version: Apple Swift version 5.7.2 (swiftlang-5.7.2.135.5 clang-1400.0.29.51)
+// swift-module-flags: -target arm64-apple-ios9.0 -enable-objc-interop -enable-library-evolution -swift-version 5 -enforce-exclusivity=checked -O -module-name OpusDecoder
+// swift-module-flags-ignorable: -enable-bare-slash-regex
+import Foundation
+@_exported import OpusDecoder
+import Swift
+import _Concurrency
+import _StringProcessing
+public func opus2wav(_ opusFilePath: Swift.String, _ wavFilePath: Swift.String) -> Swift.Int
+public func opus2mp3(_ opusFilePath: Swift.String, _ mp3FilePath: Swift.String, _ bitrate: Swift.Int32 = 24) -> Swift.Int

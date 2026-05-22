@@ -1,6 +1,6 @@
 # Phase 5 iOS Recording Acceptance Report
 
-状态：已完成 iOS 实时录音协议第一切片，WAV/MP3 decoder 和真机验收待后续 P5 切片。
+状态：已完成 iOS 实时录音协议和 WAV/MP3 decoder 第一切片，真机可播放验收待 HBuilderX iOS 构建与 Oleap 耳机实测。
 
 ## 本轮范围
 
@@ -13,10 +13,12 @@
   - 统计 frameCount、durationMs、lostFrames、outOfOrderFrames、badFrames。
   - 在 App 私有目录 `oleap-recordings` 下落盘 `.opusraw` 和 `.oleapframes`。
   - 通过 `onRecordingProgress` 上报节流后的录音进度。
-- iOS decoder 边界：
-  - 停止录音会关闭文件句柄并保留临时 OPUS 文件。
-  - 请求 WAV/MP3 输出时返回 `ios_audio_decode_not_ready`。
-  - 错误详情包含 `opusRawPath` 和 `framesPath`，用于后续 decoder 切片和真机排障。
+- iOS decoder：
+  - 已内置 `OpusDecoder.framework`。
+  - 停止录音会关闭文件句柄并调用 `opus2wav` / `opus2mp3`。
+  - decoder 返回负值时返回 `opus_decode_failed`。
+  - 输出文件为空或过小时返回 `opus_decode_empty_output`。
+  - 成功返回 `filePath`、`format`、`size`、`opusRawPath` 和 `framesPath`。
 
 ## 验收命令
 
@@ -26,6 +28,6 @@ npm run check:p5-ios
 
 ## 风险与边界
 
-- 当前切片不生成可播放 WAV/MP3。
-- `FileHandle`、`FileManager`、`UTSiOS.getDataPath()` 需要 HBuilderX iOS 真机编译验证。
-- 下一切片应优先接入 iOS OPUS decoder/WAV writer，让 `stopRecording({ format: 'wav' })` 返回可播放文件。
+- 当前切片已接入 WAV/MP3 decoder，但尚未经过 HBuilderX iOS 真机编译和耳机实录可播放验证。
+- `FileHandle`、`FileManager`、`UTSiOS.getDataPath()`、`OpusDecoder.framework` 链接需要 HBuilderX iOS 真机编译验证。
+- 下一切片应推进 iOS Flash 下载，复用当前 decoder 输出 WAV/MP3。
