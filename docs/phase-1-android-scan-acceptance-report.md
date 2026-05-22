@@ -8,6 +8,7 @@
 
 - Android UTS 平台层初始化。
 - Android 12+ 运行时权限：`BLUETOOTH_SCAN`、`BLUETOOTH_CONNECT`。
+- `BLUETOOTH_SCAN` manifest 使用 `android:usesPermissionFlags="neverForLocation"`，明确扫描不用于物理定位，避免 Android 权限库在授权前抛出 manifest 配置异常。
 - Android 11 及以下运行时权限：`ACCESS_FINE_LOCATION`。
 - 蓝牙支持和开启状态查询。
 - BLE 扫描启动。
@@ -54,6 +55,7 @@ Phase 0 check passed
 
 - P1-1/P1-2 的代码边界清晰，没有提前实现连接。
 - 扫描前检查权限和蓝牙状态。
+- Android 12+ 不额外申请定位权限；Android 11 及以下保留 `ACCESS_FINE_LOCATION`，符合 BLE 扫描历史权限要求和最小权限原则。
 - 扫描有超时和显式停止路径。
 - 只向页面发出 Oleap 设备，避免页面层处理全量蓝牙设备。
 - 扫描超时有默认值和正数保护，避免传入异常 timeout 导致扫描无法自动结束。

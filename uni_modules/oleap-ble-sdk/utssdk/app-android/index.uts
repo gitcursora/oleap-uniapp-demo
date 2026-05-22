@@ -18,6 +18,7 @@ import FileOutputStream from 'java.io.FileOutputStream'
 import RandomAccessFile from 'java.io.RandomAccessFile'
 import UUID from 'java.util.UUID'
 import OpusDecoder from 'com.example.oleap.OpusDecoder'
+import type { OleapBleErrorArea } from '../unierror.uts'
 import { OleapBleNativeError } from '../unierror.uts'
 
 type NativeDeviceFoundCallback = (device: any) => void
@@ -29,13 +30,13 @@ type NativeErrorCallback = (event: any) => void
 const SDK_VERSION = '0.1.0-p4-flash'
 const OLEAP_NAME_PREFIX = 'Oleap'
 const DIAGNOSTIC_LIMIT = 500
-const DEFAULT_SCAN_TIMEOUT_MS = 8000
-const DEFAULT_CONNECT_TIMEOUT_MS = 15000
-const DEFAULT_WRITE_TIMEOUT_MS = 8000
-const DEFAULT_CONTROL_TIMEOUT_MS = 3000
-const DEFAULT_RECORDING_COMMAND_TIMEOUT_MS = 3000
-const DEFAULT_FLASH_COMMAND_TIMEOUT_MS = 3000
-const FLASH_DOWNLOAD_FRAME_TIMEOUT_MS = 5000
+const DEFAULT_SCAN_TIMEOUT_MS: Int = 8000
+const DEFAULT_CONNECT_TIMEOUT_MS: Int = 15000
+const DEFAULT_WRITE_TIMEOUT_MS: Int = 8000
+const DEFAULT_CONTROL_TIMEOUT_MS: Int = 3000
+const DEFAULT_RECORDING_COMMAND_TIMEOUT_MS: Int = 3000
+const DEFAULT_FLASH_COMMAND_TIMEOUT_MS: Int = 3000
+const FLASH_DOWNLOAD_FRAME_TIMEOUT_MS: Int = 5000
 const CONTROL_MAX_ATTEMPTS = 3
 
 const COMMUNICATION_SERVICE_UUID = '00002001-0000-1000-8000-00805f9b34fb'
@@ -103,6 +104,455 @@ const RECORDING_SAMPLE_RATE = 16000
 const RECORDING_PCM_BITS_PER_SAMPLE = 16
 const RECORDING_PROGRESS_THROTTLE_MS = 200
 
+class OleapDeviceInfo {
+  deviceId: string
+  name: string
+  rssi: number
+  manufacturerDataHex: string
+
+  constructor(deviceId: string, name: string, rssi: number, manufacturerDataHex: string = '') {
+    this.deviceId = deviceId
+    this.name = name
+    this.rssi = rssi
+    this.manufacturerDataHex = manufacturerDataHex
+  }
+}
+
+class WriteRequest {
+  channel: string
+  value: Array<number>
+  withoutResponse: boolean
+  generation: number
+  resolve: () => void
+  reject: (error: any | null) => void
+  gatt: BluetoothGatt | null = null
+  characteristicUuid: string = ''
+
+  constructor(
+    channel: string,
+    value: Array<number>,
+    withoutResponse: boolean,
+    generation: number,
+    resolve: () => void,
+    reject: (error: any | null) => void
+  ) {
+    this.channel = channel
+    this.value = value
+    this.withoutResponse = withoutResponse
+    this.generation = generation
+    this.resolve = resolve
+    this.reject = reject
+  }
+}
+
+class ControlFrame {
+  desc: number
+  messageType: number
+  payload: Array<number>
+  crc32: number | null
+  error: boolean
+
+  constructor(desc: number, messageType: number, payload: Array<number>, crc32: number | null, error: boolean) {
+    this.desc = desc
+    this.messageType = messageType
+    this.payload = payload
+    this.crc32 = crc32
+    this.error = error
+  }
+}
+
+class ControlPayload {
+  sendSn: number
+  askSn: number
+  command: number
+  commandPayload: Array<number>
+
+  constructor(sendSn: number, askSn: number, command: number, commandPayload: Array<number>) {
+    this.sendSn = sendSn
+    this.askSn = askSn
+    this.command = command
+    this.commandPayload = commandPayload
+  }
+}
+
+class DataPoint {
+  id: number
+  typeCode: number
+  rawValue: Array<number>
+
+  constructor(id: number, typeCode: number, rawValue: Array<number>) {
+    this.id = id
+    this.typeCode = typeCode
+    this.rawValue = rawValue
+  }
+}
+
+class DpEvent {
+  dpId: number
+  id: number
+  name: string
+  typeCode: number
+  rawValue: Array<number>
+  raw: Array<number>
+  value: any | null
+  timestamp: string
+  source: string
+
+  constructor(dp: DataPoint, name: string, value: any | null, source: string = '') {
+    this.dpId = dp.id
+    this.id = dp.id
+    this.name = name
+    this.typeCode = dp.typeCode
+    this.rawValue = dp.rawValue
+    this.raw = dp.rawValue
+    this.value = value
+    this.timestamp = nowIso()
+    this.source = source
+  }
+}
+
+class ControlTransaction {
+  kind: string
+  dpId: number
+  frame: Array<number>
+  sendSn: number
+  attempts: number = 0
+  generation: number
+  completed: boolean = false
+  resolve: (value: DpEvent | null) => void
+  reject: (error: any | null) => void
+
+  constructor(
+    kind: string,
+    dpId: number,
+    frame: Array<number>,
+    sendSn: number,
+    generation: number,
+    resolve: (value: DpEvent | null) => void,
+    reject: (error: any | null) => void
+  ) {
+    this.kind = kind
+    this.dpId = dpId
+    this.frame = frame
+    this.sendSn = sendSn
+    this.generation = generation
+    this.resolve = resolve
+    this.reject = reject
+  }
+}
+
+class RecordingSceneCommand {
+  scene: string
+  command: number
+
+  constructor(scene: string, command: number) {
+    this.scene = scene
+    this.command = command
+  }
+}
+
+class RecordingFrame {
+  frameLen: number
+  opusConfig: number
+  dataIndex: number
+  bitrate: number
+  channels: number
+  sampleRate: number
+  frameTimeMs: number
+  payload: Array<number>
+  rawFrame: Array<number>
+
+  constructor(
+    frameLen: number,
+    opusConfig: number,
+    dataIndex: number,
+    bitrate: number,
+    channels: number,
+    sampleRate: number,
+    frameTimeMs: number,
+    payload: Array<number>,
+    rawFrame: Array<number>
+  ) {
+    this.frameLen = frameLen
+    this.opusConfig = opusConfig
+    this.dataIndex = dataIndex
+    this.bitrate = bitrate
+    this.channels = channels
+    this.sampleRate = sampleRate
+    this.frameTimeMs = frameTimeMs
+    this.payload = payload
+    this.rawFrame = rawFrame
+  }
+}
+
+class RecordingResponse {
+  kind: string = 'frames'
+  command: number = 0
+  startReason: number = 0
+  recordChannel: number = 0
+  packetLength: number = 0
+  stopReason: number = 0
+  stopReasonScene: number = 0
+  frames: Array<RecordingFrame> = new Array<RecordingFrame>()
+  badFrames: number = 0
+  fileCount: number = 0
+  fileStartId: number = 0
+  empty: boolean = false
+  isFileExist: boolean = false
+  fileInfo: FlashFileInfo | null = null
+  returnLength: number = 0
+  startAddress: number = 0
+  fileData: Array<number> = new Array<number>()
+  dataCapacity: number = 0
+  completed: boolean = false
+  readError: boolean = false
+  fileMissing: boolean = false
+  status: number = 0
+  fileId: number = 0
+  crc32: number | null = null
+}
+
+class FlashFileInfo {
+  fileVersion: number = 0
+  blockNum: number = 0
+  fileId: number = 0
+  fileLength: number = 0
+  btAddr: Array<number> = new Array<number>()
+  btAddrHex: string = ''
+  recordTime: string | null = null
+  recordType: number = 0
+  recordCh: number = 0
+  channels: number = 1
+  sampleRate: number = RECORDING_SAMPLE_RATE
+  bitRate: number = 16000
+}
+
+class DecodeStats {
+  decodedFrames: number
+  failedFrames: number
+  pcmBytes: number
+
+  constructor(decodedFrames: number, failedFrames: number, pcmBytes: number) {
+    this.decodedFrames = decodedFrames
+    this.failedFrames = failedFrames
+    this.pcmBytes = pcmBytes
+  }
+}
+
+class RecordingResult {
+  filePath: string
+  format: string
+  durationMs: number = 0
+  sampleRate: number = RECORDING_SAMPLE_RATE
+  channels: number = 1
+  frameCount: number = 0
+  frameLen: number = 0
+  decodedFrames: number = 0
+  failedFrames: number = 0
+  pcmBytes: number = 0
+  lostFrames: number = 0
+  outOfOrderFrames: number = 0
+  badFrames: number = 0
+  size: number = 0
+  source: string = 'realtime'
+  fileId: number | null = null
+  opusRawPath: string = ''
+  framesPath: string = ''
+  deleted: boolean = false
+  nextFileId: number | null = null
+  deleteAfterSuccess: boolean = false
+
+  constructor(filePath: string, format: string) {
+    this.filePath = filePath
+    this.format = format
+  }
+}
+
+class RecordingSession {
+  sessionId: string
+  scene: string
+  source: string = 'realtime'
+  fileId: number | null = null
+  startedAt: string = nowIso()
+  stoppedAt: string | null = null
+  generation: number
+  recordChannel: number
+  packetLength: number
+  sampleRate: number = RECORDING_SAMPLE_RATE
+  channels: number = 1
+  bitrate: number = 32000
+  frameCount: number = 0
+  frameLen: number = 0
+  variableFrameLen: boolean = false
+  lostFrames: number = 0
+  outOfOrderFrames: number = 0
+  badFrames: number = 0
+  durationMs: number = 0
+  opusPayloadBytes: number = 0
+  framedBytes: number = 0
+  lastIndex: number | null = null
+  lastProgressAt: number = 0
+  fileWriteError: string | null = null
+  opusRawPath: string = ''
+  framesPath: string = ''
+  opusRawStream: FileOutputStream | null = null
+  framesStream: FileOutputStream | null = null
+  expectedBytes: number = 0
+  downloadedBytes: number = 0
+  progress: number = 0
+
+  constructor(sessionId: string, scene: string, generation: number, recordChannel: number, packetLength: number) {
+    this.sessionId = sessionId
+    this.scene = scene
+    this.generation = generation
+    this.recordChannel = recordChannel
+    this.packetLength = packetLength
+  }
+}
+
+class RecordingCommandRequest {
+  kind: string
+  scene: string = ''
+  format: string = 'wav'
+  command: Array<number>
+  generation: number
+  completed: boolean = false
+  resolve: (value: any) => void
+  reject: (error: any | null) => void
+
+  constructor(
+    kind: string,
+    command: Array<number>,
+    generation: number,
+    resolve: (value: any) => void,
+    reject: (error: any | null) => void
+  ) {
+    this.kind = kind
+    this.command = command
+    this.generation = generation
+    this.resolve = resolve
+    this.reject = reject
+  }
+}
+
+class FlashCommandRequest {
+  kind: string
+  generation: number
+  completed: boolean = false
+  resolve: (value: RecordingResponse) => void
+  reject: (error: any | null) => void
+
+  constructor(kind: string, generation: number, resolve: (value: RecordingResponse) => void, reject: (error: any | null) => void) {
+    this.kind = kind
+    this.generation = generation
+    this.resolve = resolve
+    this.reject = reject
+  }
+}
+
+class FlashDownloadSession {
+  fileInfo: FlashFileInfo
+  format: string
+  deleteAfterSuccess: boolean
+  session: RecordingSession
+  completed: boolean = false
+  resolve: (value: RecordingResult) => void
+  reject: (error: any | null) => void
+
+  constructor(
+    fileInfo: FlashFileInfo,
+    format: string,
+    deleteAfterSuccess: boolean,
+    session: RecordingSession,
+    resolve: (value: RecordingResult) => void,
+    reject: (error: any | null) => void
+  ) {
+    this.fileInfo = fileInfo
+    this.format = format
+    this.deleteAfterSuccess = deleteAfterSuccess
+    this.session = session
+    this.resolve = resolve
+    this.reject = reject
+  }
+}
+
+function asNativeError(error: any): OleapBleNativeError | null {
+  if (error instanceof OleapBleNativeError) {
+    return error as OleapBleNativeError
+  }
+  return null
+}
+
+function optionObject(options: any | null): UTSJSONObject | null {
+  if (options == null) {
+    return null
+  }
+  return new UTSJSONObject(options)
+}
+
+function optionValue(options: any | null, key: string): any | null {
+  const object = optionObject(options)
+  if (object == null) {
+    return null
+  }
+  return object.getAny(key)
+}
+
+function optionString(options: any | null, key: string, fallback: string | null = null): string | null {
+  const object = optionObject(options)
+  if (object == null) {
+    return fallback
+  }
+  const direct = object.getString(key)
+  if (direct != null) {
+    return direct
+  }
+  const value = object.getAny(key)
+  return value == null ? fallback : `${value}`
+}
+
+function optionNumber(options: any | null, key: string, fallback: number): number {
+  const object = optionObject(options)
+  if (object == null) {
+    return fallback
+  }
+  const direct = object.getNumber(key)
+  if (direct != null) {
+    return direct
+  }
+  const value = object.getAny(key)
+  if (value == null) {
+    return fallback
+  }
+  const parsed = parseFloat(`${value}`)
+  return isNaN(parsed) ? fallback : parsed
+}
+
+function optionInt(options: any | null, key: string, fallback: Int): Int {
+  const value = optionNumber(options, key, fallback)
+  return value as Int
+}
+
+function optionBoolean(options: any | null, key: string, fallback: boolean = false): boolean {
+  const object = optionObject(options)
+  if (object == null) {
+    return fallback
+  }
+  const direct = object.getBoolean(key)
+  if (direct != null) {
+    return direct
+  }
+  const value = object.getAny(key)
+  if (value == null) {
+    return fallback
+  }
+  return `${value}` == 'true' || `${value}` == '1'
+}
+
+function nonNullAny(value: any | null): any {
+  return value == null ? {} : value
+}
+
 let initialized = false
 let scanning = false
 let scannerCallback: OleapScanCallback | null = null
@@ -124,20 +574,20 @@ let enablingNotifications = false
 let notifyEnableGeneration = 0
 let activeNotifyDescriptor: BluetoothGattDescriptor | null = null
 const pendingNotifyDescriptors = new Array<BluetoothGattDescriptor>()
-let activeWriteRequest: any | null = null
-const writeQueue = new Array<any>()
+let activeWriteRequest: WriteRequest | null = null
+const writeQueue = new Array<WriteRequest>()
 let writeTimeoutId: number | null = null
 let controlSendSn = 0
 let controlAppDpSn = 0
-let activeControlTransaction: any | null = null
-const controlTransactionQueue = new Array<any>()
+let activeControlTransaction: ControlTransaction | null = null
+const controlTransactionQueue = new Array<ControlTransaction>()
 let controlTimeoutId: number | null = null
-let recordingSession: any | null = null
+let recordingSession: RecordingSession | null = null
 let recordingSessionCounter = 0
-let pendingRecordingCommand: any | null = null
+let pendingRecordingCommand: RecordingCommandRequest | null = null
 let recordingCommandTimeoutId: number | null = null
-let flashSession: any | null = null
-let pendingFlashCommand: any | null = null
+let flashSession: FlashDownloadSession | null = null
+let pendingFlashCommand: FlashCommandRequest | null = null
 let flashCommandTimeoutId: number | null = null
 let flashDownloadTimeoutId: number | null = null
 let flashHeadFileId: number | null = null
@@ -153,7 +603,7 @@ const decodeProgressCallbacks = new Set<NativeProgressCallback>()
 const errorCallbacks = new Set<NativeErrorCallback>()
 const diagnostics = new Array<any>()
 const discoveredDeviceIds = new Set<string>()
-const dpSnapshot = new Map<number, any>()
+const dpSnapshot = new Map<number, DpEvent>()
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -170,8 +620,8 @@ function pushDiagnostic(event: string, details: any | null = null): void {
   }
 }
 
-function makeError(code: string, message: string, area: string, recoverable: boolean = true, details: any | null = null): OleapBleNativeError {
-  return new OleapBleNativeError(code, message, area as any, recoverable, details)
+function makeError(code: string, message: string, area: OleapBleErrorArea, recoverable: boolean = true, details: any | null = null): OleapBleNativeError {
+  return new OleapBleNativeError(code, message, area, recoverable, details)
 }
 
 function emitError(error: OleapBleNativeError): void {
@@ -190,7 +640,9 @@ function emitError(error: OleapBleNativeError): void {
 
 function rejectWith<T>(error: OleapBleNativeError): Promise<T> {
   emitError(error)
-  return Promise.reject<T>(error)
+  return new Promise<T>((_resolve, reject) => {
+    reject(error)
+  })
 }
 
 function resolvePendingConnect(device: any): void {
@@ -272,7 +724,7 @@ function clearFlashDownloadTimeout(): void {
   }
 }
 
-function rejectControlRequest(request: any, error: OleapBleNativeError, emit: boolean = true): void {
+function rejectControlRequest(request: ControlTransaction | null, error: OleapBleNativeError, emit: boolean = true): void {
   if (request == null || request.completed == true) {
     return
   }
@@ -305,7 +757,7 @@ function resetControlProtocol(reason: string): void {
   dpSnapshot.clear()
 }
 
-function rejectRecordingCommand(request: any, error: OleapBleNativeError, emit: boolean = true): void {
+function rejectRecordingCommand(request: RecordingCommandRequest | null, error: OleapBleNativeError, emit: boolean = true): void {
   if (request == null || request.completed == true) {
     return
   }
@@ -334,18 +786,19 @@ function resetRecordingProtocol(reason: string): void {
   const pending = pendingRecordingCommand
   pendingRecordingCommand = null
   rejectRecordingCommand(pending, error, false)
-  if (recordingSession != null) {
-    closeRecordingSessionStreams(recordingSession)
+  const active = recordingSession
+  if (active != null) {
+    closeRecordingSessionStreams(active)
     pushDiagnostic('recording_session_abandoned', {
-      sessionId: recordingSession.sessionId,
-      frameCount: recordingSession.frameCount,
+      sessionId: active.sessionId,
+      frameCount: active.frameCount,
       reason
     })
   }
   recordingSession = null
 }
 
-function rejectFlashCommand(request: any, error: OleapBleNativeError, emit: boolean = true): void {
+function rejectFlashCommand(request: FlashCommandRequest | null, error: OleapBleNativeError, emit: boolean = true): void {
   if (request == null || request.completed == true) {
     return
   }
@@ -362,7 +815,7 @@ function rejectFlashCommand(request: any, error: OleapBleNativeError, emit: bool
   }
 }
 
-function rejectFlashSession(active: any | null, error: OleapBleNativeError, emit: boolean = true): void {
+function rejectFlashSession(active: FlashDownloadSession | null, error: OleapBleNativeError, emit: boolean = true): void {
   if (active == null || active.completed == true) {
     return
   }
@@ -446,6 +899,7 @@ function permissionResult(): any {
   return {
     bluetooth: granted,
     location: Build.VERSION.SDK_INT >= 31 ? true : granted,
+    permissionGranted: granted,
     androidSdk: Build.VERSION.SDK_INT
   }
 }
@@ -510,19 +964,14 @@ function isOleapScanResult(result: ScanResult): boolean {
   return name.startsWith(OLEAP_NAME_PREFIX)
 }
 
-function toOleapDevice(result: ScanResult): any {
+function toOleapDevice(result: ScanResult): OleapDeviceInfo {
   const device = result.getDevice()
   const id = device == null ? '' : deviceAddressOf(device)
   const name = resultNameOf(result)
-  return {
-    deviceId: id,
-    name: name.length > 0 ? name : 'Oleap Device',
-    rssi: result.getRssi(),
-    manufacturerDataHex: ''
-  }
+  return new OleapDeviceInfo(id, name.length > 0 ? name : 'Oleap Device', result.getRssi(), '')
 }
 
-function emitDeviceFound(device: any): void {
+function emitDeviceFound(device: OleapDeviceInfo): void {
   if (device.deviceId == null || device.deviceId.length == 0) {
     return
   }
@@ -541,6 +990,10 @@ function emitDeviceFound(device: any): void {
 }
 
 class OleapScanCallback extends ScanCallback {
+  constructor() {
+    super()
+  }
+
   @UTSJS.keepAlive
   override onScanResult(callbackType: Int, result: ScanResult): void {
     if (!isOleapScanResult(result)) {
@@ -550,8 +1003,8 @@ class OleapScanCallback extends ScanCallback {
   }
 
   @UTSJS.keepAlive
-  override onBatchScanResults(results: Array<ScanResult>): void {
-    results.forEach((result) => {
+  override onBatchScanResults(results: MutableList<ScanResult>): void {
+    results.forEach((result: ScanResult) => {
       if (isOleapScanResult(result)) {
         emitDeviceFound(toOleapDevice(result))
       }
@@ -604,7 +1057,7 @@ function stopScanInternal(recordDiagnostic: boolean = true): void {
   }
 }
 
-function notImplemented<T>(code: string, message: string, area: string): Promise<T> {
+function notImplemented<T>(code: string, message: string, area: OleapBleErrorArea): Promise<T> {
   return rejectWith<T>(makeError(code, message, area, true))
 }
 
@@ -666,7 +1119,7 @@ function sameUuid(actual: UUID | null, expected: string): boolean {
 
 function findService(gatt: BluetoothGatt, serviceUuid: string): BluetoothGattService | null {
   const services = gatt.getServices()
-  for (let i = 0; i < services.size(); i++) {
+  for (let i: Int = 0; i < services.size; i++) {
     const service = services.get(i)
     if (sameUuid(service.getUuid(), serviceUuid)) {
       return service
@@ -680,7 +1133,7 @@ function findCharacteristic(service: BluetoothGattService | null, characteristic
     return null
   }
   const characteristics = service.getCharacteristics()
-  for (let i = 0; i < characteristics.size(); i++) {
+  for (let i: Int = 0; i < characteristics.size; i++) {
     const characteristic = characteristics.get(i)
     if (sameUuid(characteristic.getUuid(), characteristicUuid)) {
       return characteristic
@@ -738,7 +1191,7 @@ function byteArrayToNumbers(value: ByteArray | null): Array<number> {
 
 function numbersToByteArray(value: Array<number>): ByteArray {
   const bytes: ByteArray = new ByteArray(value.length as Int)
-  for (let index = 0; index < value.length; index++) {
+  for (let index: Int = 0; index < value.length; index++) {
     const normalized = value[index as Int] & 0xff
     bytes[index] = normalized.toByte()
   }
@@ -920,7 +1373,7 @@ function encodeControlFrame(desc: number, payload: Array<number>): Array<number>
   return frame
 }
 
-function decodeControlFrame(bytes: Array<number>): any {
+function decodeControlFrame(bytes: Array<number>): ControlFrame {
   if (bytes.length < CONTROL_FRAME_HEADER_LENGTH) {
     throw makeError('control_frame_too_short', '控制协议帧长度不足', 'control', true, {
       actualLength: bytes.length
@@ -960,15 +1413,10 @@ function decodeControlFrame(bytes: Array<number>): any {
       })
     }
   }
-  return {
-    desc,
-    error: (desc & CONTROL_DESC_ERROR_MASK) != 0,
-    ack: (desc & 0x0010) != 0,
-    payload
-  }
+  return new ControlFrame(desc, messageType, payload, hasCrc ? readUint32Le(bytes, CONTROL_FRAME_HEADER_LENGTH + payloadLength) : null, (desc & CONTROL_DESC_ERROR_MASK) != 0)
 }
 
-function decodeControlPayload(payload: Array<number>): any {
+function decodeControlPayload(payload: Array<number>): ControlPayload {
   if (payload.length < CONTROL_PAYLOAD_HEADER_LENGTH) {
     throw makeError('control_payload_too_short', '控制协议 Payload 长度不足', 'control', true, {
       actualLength: payload.length
@@ -982,12 +1430,12 @@ function decodeControlPayload(payload: Array<number>): any {
   ) {
     throw makeError('control_command_unknown', '控制协议 CMD 未知', 'control', true, { command })
   }
-  return {
-    sendSn: readUint32Le(payload, 0),
-    askSn: readUint32Le(payload, 4),
+  return new ControlPayload(
+    readUint32Le(payload, 0),
+    readUint32Le(payload, 4),
     command,
-    commandPayload: byteSlice(payload, CONTROL_PAYLOAD_HEADER_LENGTH, payload.length)
-  }
+    byteSlice(payload, CONTROL_PAYLOAD_HEADER_LENGTH, payload.length)
+  )
 }
 
 function encodeDpCommandPayload(dpSn: number, dpData: Array<number> | null = null): Array<number> {
@@ -1026,7 +1474,7 @@ function encodeDataPoint(dpId: number, typeCode: number, rawValue: Array<number>
   return bytes
 }
 
-function decodeDataPoint(bytes: Array<number>): any | null {
+function decodeDataPoint(bytes: Array<number>): DataPoint | null {
   if (bytes.length == 0) {
     return null
   }
@@ -1046,11 +1494,7 @@ function decodeDataPoint(bytes: Array<number>): any | null {
       actualLength
     })
   }
-  return {
-    id: dpId,
-    typeCode,
-    rawValue: byteSlice(bytes, 4, 4 + declaredLength)
-  }
+  return new DataPoint(dpId, typeCode, byteSlice(bytes, 4, 4 + declaredLength))
 }
 
 function readFlexibleInt(dpId: number, bytes: Array<number>): number {
@@ -1090,9 +1534,9 @@ function dpNameOf(dpId: number): string {
   return `dp_${dpId}`
 }
 
-function decodeDpValue(dp: any): any {
-  const raw = dp.rawValue as Array<number>
-  const dpId = Number(dp.id)
+function decodeDpValue(dp: DataPoint): any {
+  const raw = dp.rawValue
+  const dpId = dp.id
   if (dpId == DP_ID_BATTERY) {
     return readFlexibleInt(dpId, raw)
   }
@@ -1150,21 +1594,12 @@ function decodeDpValue(dp: any): any {
   return raw
 }
 
-function normalizeDp(dp: any): any {
+function normalizeDp(dp: DataPoint): DpEvent {
   const value = decodeDpValue(dp)
-  return {
-    dpId: dp.id,
-    id: dp.id,
-    name: dpNameOf(dp.id),
-    typeCode: dp.typeCode,
-    rawValue: dp.rawValue,
-    raw: dp.rawValue,
-    value,
-    timestamp: nowIso()
-  }
+  return new DpEvent(dp, dpNameOf(dp.id), value)
 }
 
-function storeAndEmitDp(dp: any, source: string): any {
+function storeAndEmitDp(dp: DataPoint, source: string): DpEvent {
   const event = normalizeDp(dp)
   event.source = source
   dpSnapshot.set(event.dpId, event)
@@ -1221,7 +1656,7 @@ function ensureControlReady(): OleapBleNativeError | null {
   return null
 }
 
-function completeControlRequest(request: any, value: any | null): void {
+function completeControlRequest(request: ControlTransaction | null, value: DpEvent | null): void {
   if (request == null || request.completed == true) {
     return
   }
@@ -1234,7 +1669,7 @@ function completeControlRequest(request: any, value: any | null): void {
   processNextControlTransaction()
 }
 
-function failControlRequest(request: any, error: OleapBleNativeError, emit: boolean = true): void {
+function failControlRequest(request: ControlTransaction | null, error: OleapBleNativeError, emit: boolean = true): void {
   if (request == null || request.completed == true) {
     return
   }
@@ -1246,7 +1681,7 @@ function failControlRequest(request: any, error: OleapBleNativeError, emit: bool
   processNextControlTransaction()
 }
 
-function sendControlAttempt(request: any): void {
+function sendControlAttempt(request: ControlTransaction): void {
   if (request.completed == true) {
     return
   }
@@ -1260,7 +1695,7 @@ function sendControlAttempt(request: any): void {
     )
     return
   }
-  request.attempts = Number(request.attempts) + 1
+  request.attempts += 1
   pushDiagnostic('control_write_attempt', {
     kind: request.kind,
     dpId: request.dpId,
@@ -1279,7 +1714,7 @@ function sendControlAttempt(request: any): void {
           return
         }
         clearControlTimeout()
-        if (Number(request.attempts) < CONTROL_MAX_ATTEMPTS) {
+        if (request.attempts < CONTROL_MAX_ATTEMPTS) {
           pushDiagnostic('control_retry', {
             kind: request.kind,
             dpId: request.dpId,
@@ -1326,23 +1761,13 @@ function processNextControlTransaction(): void {
   sendControlAttempt(request)
 }
 
-function enqueueControlTransaction(kind: string, dpId: number, frame: Array<number>, sendSn: number): Promise<any> {
+function enqueueControlTransaction(kind: string, dpId: number, frame: Array<number>, sendSn: number): Promise<DpEvent | null> {
   const readyError = ensureControlReady()
   if (readyError != null) {
-    return rejectWith<any>(readyError)
+    return rejectWith<DpEvent | null>(readyError)
   }
-  return new Promise<any>((resolve, reject) => {
-    const request = {
-      kind,
-      dpId,
-      frame,
-      sendSn,
-      attempts: 0,
-      generation: sessionGeneration,
-      completed: false,
-      resolve,
-      reject
-    }
+  return new Promise<DpEvent | null>((resolve, reject) => {
+    const request = new ControlTransaction(kind, dpId, frame, sendSn, sessionGeneration, resolve, reject)
     controlTransactionQueue.push(request)
     pushDiagnostic('control_transaction_enqueued', {
       kind,
@@ -1355,12 +1780,12 @@ function enqueueControlTransaction(kind: string, dpId: number, frame: Array<numb
   })
 }
 
-function queryDp(dpId: number): Promise<any> {
+function queryDp(dpId: number): Promise<DpEvent | null> {
   const sendSn = nextControlSendSn()
   return enqueueControlTransaction('query', dpId, buildControlQueryFrame(dpId, sendSn), sendSn)
 }
 
-function writeDp(dpId: number, typeCode: number, rawValue: Array<number>): Promise<any> {
+function writeDp(dpId: number, typeCode: number, rawValue: Array<number>): Promise<DpEvent | null> {
   const sendSn = nextControlSendSn()
   const appDpSn = nextControlAppDpSn()
   return enqueueControlTransaction(
@@ -1387,7 +1812,7 @@ function ackControlReport(sendSn: number): void {
     })
 }
 
-function handleControlDpSend(frame: any, payload: any): void {
+function handleControlDpSend(frame: ControlFrame, payload: ControlPayload): void {
   const dpData = decodeDpData(payload.commandPayload)
   const decoded = decodeDataPoint(dpData)
   if (payload.askSn == 0) {
@@ -1420,7 +1845,7 @@ function handleControlDpSend(frame: any, payload: any): void {
   }
 }
 
-function handleControlDpWrite(frame: any, payload: any): void {
+function handleControlDpWrite(frame: ControlFrame, payload: ControlPayload): void {
   const active = activeControlTransaction
   if (
     active == null ||
@@ -1429,7 +1854,7 @@ function handleControlDpWrite(frame: any, payload: any): void {
   ) {
     return
   }
-  let rollback: any | null = null
+  let rollback: DpEvent | null = null
   const dpData = decodeDpData(payload.commandPayload)
   const decoded = decodeDataPoint(dpData)
   if (decoded != null) {
@@ -1478,10 +1903,10 @@ function handleControlIncomingFrame(bytes: Array<number>, generation: number): v
       handleControlDpWrite(frame, payload)
     }
   } catch (error) {
-    const maybeError = error as any
+    const maybeError = asNativeError(error)
     let nativeError: OleapBleNativeError
-    if (maybeError != null && maybeError.code != null && maybeError.area != null) {
-      nativeError = maybeError as OleapBleNativeError
+    if (maybeError != null) {
+      nativeError = maybeError
     } else {
       nativeError = makeError('control_protocol_error', '控制协议解析失败', 'control', true, {
         error: `${error}`,
@@ -1566,31 +1991,31 @@ function buildFlashDeleteCommand(fileId: number): Array<number> {
   return buildFlashCommand(FLASH_COMMAND_DELETE, uint32Payload(fileId), true)
 }
 
-function recordingSceneCommandOf(value: any | null): any {
+function recordingSceneCommandOf(value: any | null): RecordingSceneCommand {
   const raw = value == null ? 'meeting' : `${value}`
   if (raw == 'meeting' || raw == '1') {
-    return { scene: 'meeting', command: RECORDING_COMMAND_MEETING }
+    return new RecordingSceneCommand('meeting', RECORDING_COMMAND_MEETING)
   }
   if (raw == 'call' || raw == '2') {
-    return { scene: 'call', command: RECORDING_COMMAND_CALL }
+    return new RecordingSceneCommand('call', RECORDING_COMMAND_CALL)
   }
   if (raw == 'media' || raw == '3') {
-    return { scene: 'media', command: RECORDING_COMMAND_MEDIA }
+    return new RecordingSceneCommand('media', RECORDING_COMMAND_MEDIA)
   }
   if (raw == 'ambient' || raw == '4') {
-    return { scene: 'ambient', command: RECORDING_COMMAND_AMBIENT }
+    return new RecordingSceneCommand('ambient', RECORDING_COMMAND_AMBIENT)
   }
   if (raw == '6') {
-    return { scene: 'scene_6', command: RECORDING_COMMAND_SCENE_6 }
+    return new RecordingSceneCommand('scene_6', RECORDING_COMMAND_SCENE_6)
   }
   if (raw == '7') {
-    return { scene: 'scene_7', command: RECORDING_COMMAND_SCENE_7 }
+    return new RecordingSceneCommand('scene_7', RECORDING_COMMAND_SCENE_7)
   }
   throw makeError('invalid_recording_scene', '录音场景不支持', 'recording', false, { scene: raw })
 }
 
 function requestedRecordingFormatOf(options: any | null): string {
-  const format = options == null || options.format == null ? 'wav' : `${options.format}`
+  const format = optionString(options, 'format', 'wav')!
   if (format == 'wav' || format == 'mp3') {
     return format
   }
@@ -1617,45 +2042,42 @@ function recordingFrameTimeMs(frameLen: number, bitrate: number): number {
   return value > 0 ? value : 20
 }
 
-function splitRecordingFrames(bytes: Array<number>): any {
-  const frames = new Array<any>()
+function splitRecordingFrames(bytes: Array<number>): RecordingResponse {
+  const response = new RecordingResponse()
+  response.kind = 'frames'
   let offset = 0
-  let badFrames = 0
   while (offset < bytes.length) {
     if (bytes.length - offset < RECORDING_FRAME_HEADER_LENGTH) {
-      badFrames += 1
+      response.badFrames += 1
       break
     }
     const frameLen = bytes[offset] & 0xff
     if (frameLen <= 0) {
-      badFrames += 1
+      response.badFrames += 1
       break
     }
     const end = offset + RECORDING_FRAME_HEADER_LENGTH + frameLen
     if (end > bytes.length) {
-      badFrames += 1
+      response.badFrames += 1
       break
     }
     const opusConfig = bytes[offset + 1] & 0xff
     const bitrate = recordingBitrateOf(opusConfig)
     const channels = recordingChannelsOf(opusConfig)
-    frames.push({
+    response.frames.push(new RecordingFrame(
       frameLen,
       opusConfig,
-      dataIndex: readUint16Le(bytes, offset + 2),
+      readUint16Le(bytes, offset + 2),
       bitrate,
       channels,
-      sampleRate: RECORDING_SAMPLE_RATE,
-      frameTimeMs: recordingFrameTimeMs(frameLen, bitrate),
-      payload: byteSlice(bytes, offset + RECORDING_FRAME_HEADER_LENGTH, end),
-      rawFrame: byteSlice(bytes, offset, end)
-    })
+      RECORDING_SAMPLE_RATE,
+      recordingFrameTimeMs(frameLen, bitrate),
+      byteSlice(bytes, offset + RECORDING_FRAME_HEADER_LENGTH, end),
+      byteSlice(bytes, offset, end)
+    ))
     offset = end
   }
-  return {
-    frames,
-    badFrames
-  }
+  return response
 }
 
 function parseFlashRecordTime(bytes: Array<number>, offset: number): string | null {
@@ -1677,22 +2099,22 @@ function parseFlashRecordTime(bytes: Array<number>, offset: number): string | nu
   return `${year}-${month}-${day}T${hour}:${minute}:${second}+08:00`
 }
 
-function parseFlashFileInfo(bytes: Array<number>, offset: number): any {
+function parseFlashFileInfo(bytes: Array<number>, offset: number): FlashFileInfo {
   const btAddr = byteSlice(bytes, offset + 12, offset + 18)
-  return {
-    fileVersion: readUint16Le(bytes, offset),
-    blockNum: readUint16Le(bytes, offset + 2),
-    fileId: readUint32Le(bytes, offset + 4),
-    fileLength: readUint32Le(bytes, offset + 8),
-    btAddr,
-    btAddrHex: bytesToHex(btAddr, btAddr.length).split(' ').join(':').toUpperCase(),
-    recordTime: parseFlashRecordTime(bytes, offset + 20),
-    recordType: bytes[offset + 26] & 0xff,
-    recordCh: bytes[offset + 27] & 0xff,
-    channels: bytes[offset + 27] & 0xff,
-    sampleRate: readUint16Le(bytes, offset + 28),
-    bitRate: readUint16Le(bytes, offset + 30)
-  }
+  const info = new FlashFileInfo()
+  info.fileVersion = readUint16Le(bytes, offset)
+  info.blockNum = readUint16Le(bytes, offset + 2)
+  info.fileId = readUint32Le(bytes, offset + 4)
+  info.fileLength = readUint32Le(bytes, offset + 8)
+  info.btAddr = btAddr
+  info.btAddrHex = bytesToHex(btAddr, btAddr.length).split(' ').join(':').toUpperCase()
+  info.recordTime = parseFlashRecordTime(bytes, offset + 20)
+  info.recordType = bytes[offset + 26] & 0xff
+  info.recordCh = bytes[offset + 27] & 0xff
+  info.channels = bytes[offset + 27] & 0xff
+  info.sampleRate = readUint16Le(bytes, offset + 28)
+  info.bitRate = readUint16Le(bytes, offset + 30)
+  return info
 }
 
 function ensureFlashResponseLength(bytes: Array<number>, command: number, minimumDeclaredLength: number): number {
@@ -1722,63 +2144,63 @@ function flashResponseCrcOf(bytes: Array<number>, declaredLength: number): numbe
   return readUint32Le(bytes, crcOffset)
 }
 
-function parseFlashFileCountResponse(bytes: Array<number>): any {
+function parseFlashFileCountResponse(bytes: Array<number>): RecordingResponse {
   const declaredLength = ensureFlashResponseLength(bytes, FLASH_COMMAND_GET_FILE_COUNT, 8)
   const fileCount = readUint32Le(bytes, 4)
   const fileStartId = readUint32Le(bytes, 8)
-  return {
-    kind: 'flash_count',
-    command: FLASH_COMMAND_GET_FILE_COUNT,
-    fileCount,
-    fileStartId,
-    empty: fileCount == 0 || fileCount == FLASH_NO_FILE_VALUE || fileStartId == FLASH_NO_FILE_VALUE,
-    crc32: flashResponseCrcOf(bytes, declaredLength)
-  }
+  const response = new RecordingResponse()
+  response.kind = 'flash_count'
+  response.command = FLASH_COMMAND_GET_FILE_COUNT
+  response.fileCount = fileCount
+  response.fileStartId = fileStartId
+  response.empty = fileCount == 0 || fileCount == FLASH_NO_FILE_VALUE || fileStartId == FLASH_NO_FILE_VALUE
+  response.crc32 = flashResponseCrcOf(bytes, declaredLength)
+  return response
 }
 
-function parseFlashFileInfoResponse(bytes: Array<number>): any {
+function parseFlashFileInfoResponse(bytes: Array<number>): RecordingResponse {
   const declaredLength = ensureFlashResponseLength(bytes, FLASH_COMMAND_GET_FILE_INFO, 36)
-  return {
-    kind: 'flash_info',
-    command: FLASH_COMMAND_GET_FILE_INFO,
-    isFileExist: readUint32Le(bytes, 4) == 1,
-    fileInfo: parseFlashFileInfo(bytes, 8),
-    crc32: flashResponseCrcOf(bytes, declaredLength)
-  }
+  const response = new RecordingResponse()
+  response.kind = 'flash_info'
+  response.command = FLASH_COMMAND_GET_FILE_INFO
+  response.isFileExist = readUint32Le(bytes, 4) == 1
+  response.fileInfo = parseFlashFileInfo(bytes, 8)
+  response.crc32 = flashResponseCrcOf(bytes, declaredLength)
+  return response
 }
 
-function parseFlashDownloadResponse(bytes: Array<number>): any {
+function parseFlashDownloadResponse(bytes: Array<number>): RecordingResponse {
   const declaredLength = ensureFlashResponseLength(bytes, FLASH_COMMAND_DOWNLOAD, 8)
   const dataCapacity = declaredLength - 8
   const dataStart = 12
   const dataEnd = dataStart + dataCapacity
   const returnLength = readUint32Le(bytes, 4)
-  return {
-    kind: 'flash_download',
-    command: FLASH_COMMAND_DOWNLOAD,
-    returnLength,
-    startAddress: readUint32Le(bytes, 8),
-    fileData: byteSlice(bytes, dataStart, dataEnd),
-    dataCapacity,
-    completed: returnLength < dataCapacity,
-    readError: returnLength == FLASH_READ_ERROR_VALUE,
-    fileMissing: returnLength == FLASH_NO_FILE_VALUE,
-    crc32: flashResponseCrcOf(bytes, declaredLength)
-  }
+  const response = new RecordingResponse()
+  response.kind = 'flash_download'
+  response.command = FLASH_COMMAND_DOWNLOAD
+  response.returnLength = returnLength
+  response.startAddress = readUint32Le(bytes, 8)
+  response.fileData = byteSlice(bytes, dataStart, dataEnd)
+  response.dataCapacity = dataCapacity
+  response.completed = returnLength < dataCapacity
+  response.readError = returnLength == FLASH_READ_ERROR_VALUE
+  response.fileMissing = returnLength == FLASH_NO_FILE_VALUE
+  response.crc32 = flashResponseCrcOf(bytes, declaredLength)
+  return response
 }
 
-function parseFlashDeleteResponse(bytes: Array<number>): any {
+function parseFlashDeleteResponse(bytes: Array<number>): RecordingResponse {
   const declaredLength = ensureFlashResponseLength(bytes, FLASH_COMMAND_DELETE, 8)
-  return {
-    kind: 'flash_delete',
-    command: FLASH_COMMAND_DELETE,
-    status: readUint32Le(bytes, 4),
-    fileId: readUint32Le(bytes, 8),
-    crc32: flashResponseCrcOf(bytes, declaredLength)
-  }
+  const response = new RecordingResponse()
+  response.kind = 'flash_delete'
+  response.command = FLASH_COMMAND_DELETE
+  response.status = readUint32Le(bytes, 4)
+  response.fileId = readUint32Le(bytes, 8)
+  response.crc32 = flashResponseCrcOf(bytes, declaredLength)
+  return response
 }
 
-function parseRecordingResponse(bytes: Array<number>): any {
+function parseRecordingResponse(bytes: Array<number>): RecordingResponse {
   if (bytes.length >= 2) {
     const command = readUint16Be(bytes, 0)
     if (command == FLASH_COMMAND_GET_FILE_COUNT) {
@@ -1813,13 +2235,13 @@ function parseRecordingResponse(bytes: Array<number>): any {
             actualLength: bytes.length
           })
         }
-        return {
-          kind: 'start',
-          command,
-          startReason: bytes[4] & 0xff,
-          recordChannel: bytes[5] & 0xff,
-          packetLength: readUint16Le(bytes, 6)
-        }
+        const response = new RecordingResponse()
+        response.kind = 'start'
+        response.command = command
+        response.startReason = bytes[4] & 0xff
+        response.recordChannel = bytes[5] & 0xff
+        response.packetLength = readUint16Le(bytes, 6)
+        return response
       }
       if (declaredLength < 2 || bytes.length < 6) {
         throw makeError('recording_stop_response_too_short', '录音停止响应长度不足', 'recording', true, {
@@ -1827,20 +2249,15 @@ function parseRecordingResponse(bytes: Array<number>): any {
           actualLength: bytes.length
         })
       }
-      return {
-        kind: 'stop',
-        command,
-        stopReason: bytes[4] & 0xff,
-        stopReasonScene: bytes[5] & 0xff
-      }
+      const response = new RecordingResponse()
+      response.kind = 'stop'
+      response.command = command
+      response.stopReason = bytes[4] & 0xff
+      response.stopReasonScene = bytes[5] & 0xff
+      return response
     }
   }
-  const result = splitRecordingFrames(bytes)
-  return {
-    kind: 'frames',
-    frames: result.frames,
-    badFrames: result.badFrames
-  }
+  return splitRecordingFrames(bytes)
 }
 
 function recordingOutputBasePath(): string {
@@ -1855,7 +2272,7 @@ function recordingOutputBasePath(): string {
   return `${context.getCacheDir().getAbsolutePath()}/oleap-recordings`
 }
 
-function openRecordingSessionFiles(session: any): void {
+function openRecordingSessionFiles(session: RecordingSession): void {
   const basePath = recordingOutputBasePath()
   if (basePath.length == 0) {
     throw makeError('recording_output_path_missing', '无法获取录音输出目录', 'recording', true)
@@ -1874,24 +2291,22 @@ function openRecordingSessionFiles(session: any): void {
   session.framesStream = new FileOutputStream(framesFile, false)
 }
 
-function appendBytesToOutputStream(stream: any | null, bytes: Array<number>): void {
+function appendBytesToOutputStream(stream: FileOutputStream | null, bytes: Array<number>): void {
   if (stream == null || bytes.length == 0) {
     return
   }
-  const output = stream as FileOutputStream
-  output.write(numbersToByteArray(bytes))
+  stream.write(numbersToByteArray(bytes))
 }
 
-function closeOutputStream(stream: any | null): void {
+function closeOutputStream(stream: FileOutputStream | null): void {
   if (stream == null) {
     return
   }
-  const output = stream as FileOutputStream
-  output.flush()
-  output.close()
+  stream.flush()
+  stream.close()
 }
 
-function closeRecordingSessionStreams(session: any | null): void {
+function closeRecordingSessionStreams(session: RecordingSession | null): void {
   if (session == null) {
     return
   }
@@ -1915,60 +2330,37 @@ function closeRecordingSessionStreams(session: any | null): void {
   session.framesStream = null
 }
 
-function createRecordingSession(scene: string, startResponse: any): any {
+function createRecordingSession(scene: string, startResponse: RecordingResponse): RecordingSession {
   recordingSessionCounter += 1
   const timestamp = new Date().getTime()
-  const session = {
-    sessionId: `android-${timestamp}-${recordingSessionCounter}`,
+  const session = new RecordingSession(
+    `android-${timestamp}-${recordingSessionCounter}`,
     scene,
-    source: 'realtime',
-    fileId: null,
-    startedAt: nowIso(),
-    stoppedAt: null,
-    generation: sessionGeneration,
-    recordChannel: startResponse.recordChannel,
-    packetLength: startResponse.packetLength,
-    sampleRate: RECORDING_SAMPLE_RATE,
-    channels: 1,
-    bitrate: 32000,
-    frameCount: 0,
-    frameLen: 0,
-    variableFrameLen: false,
-    lostFrames: 0,
-    outOfOrderFrames: 0,
-    badFrames: 0,
-    durationMs: 0,
-    opusPayloadBytes: 0,
-    framedBytes: 0,
-    lastIndex: null,
-    lastProgressAt: 0,
-    fileWriteError: null,
-    opusRawPath: '',
-    framesPath: '',
-    opusRawStream: null,
-    framesStream: null
-  }
+    sessionGeneration,
+    startResponse.recordChannel,
+    startResponse.packetLength
+  )
   openRecordingSessionFiles(session)
   return session
 }
 
-function createFlashRecordingSession(fileInfo: any): any {
-  const session = createRecordingSession('flash', {
-    recordChannel: 0,
-    packetLength: RECORDING_DECODER_FRAME_BYTES
-  })
+function createFlashRecordingSession(fileInfo: FlashFileInfo): RecordingSession {
+  const startResponse = new RecordingResponse()
+  startResponse.recordChannel = 0
+  startResponse.packetLength = RECORDING_DECODER_FRAME_BYTES
+  const session = createRecordingSession('flash', startResponse)
   session.source = 'flash'
   session.fileId = fileInfo.fileId
   session.expectedBytes = fileInfo.fileLength
   session.downloadedBytes = 0
   session.progress = 0
-  session.sampleRate = fileInfo.sampleRate == null ? RECORDING_SAMPLE_RATE : fileInfo.sampleRate
-  session.channels = fileInfo.channels == null ? 1 : fileInfo.channels
-  session.bitrate = fileInfo.bitRate == null ? 16000 : fileInfo.bitRate
+  session.sampleRate = fileInfo.sampleRate
+  session.channels = fileInfo.channels
+  session.bitrate = fileInfo.bitRate
   return session
 }
 
-function recordingSessionSummary(session: any): any {
+function recordingSessionSummary(session: RecordingSession): UTSJSONObject {
   return {
     sessionId: session.sessionId,
     scene: session.scene,
@@ -1994,12 +2386,12 @@ function recordingSessionSummary(session: any): any {
     framesPath: session.framesPath,
     recordChannel: session.recordChannel,
     packetLength: session.packetLength
-  }
+  } as UTSJSONObject
 }
 
-function emitRecordingProgress(session: any, force: boolean = false): void {
+function emitRecordingProgress(session: RecordingSession, force: boolean = false): void {
   const now = new Date().getTime()
-  if (!force && now - Number(session.lastProgressAt) < RECORDING_PROGRESS_THROTTLE_MS) {
+  if (!force && now - session.lastProgressAt < RECORDING_PROGRESS_THROTTLE_MS) {
     return
   }
   session.lastProgressAt = now
@@ -2033,7 +2425,7 @@ function emitDecodeProgress(event: any): void {
   })
 }
 
-function completeRecordingCommand(request: any, value: any | null): void {
+function completeRecordingCommand(request: RecordingCommandRequest | null, value: any): void {
   if (request == null || request.completed == true) {
     return
   }
@@ -2045,7 +2437,7 @@ function completeRecordingCommand(request: any, value: any | null): void {
   request.resolve(value)
 }
 
-function startRecordingCommandTimeout(request: any): void {
+function startRecordingCommandTimeout(request: RecordingCommandRequest): void {
   clearRecordingCommandTimeout()
   recordingCommandTimeoutId = setTimeout(() => {
     if (pendingRecordingCommand != request || request.completed == true) {
@@ -2090,7 +2482,7 @@ function ensureFlashReady(): OleapBleNativeError | null {
   return null
 }
 
-function completeFlashCommand(request: any, value: any | null): void {
+function completeFlashCommand(request: FlashCommandRequest | null, value: RecordingResponse): void {
   if (request == null || request.completed == true) {
     return
   }
@@ -2102,7 +2494,7 @@ function completeFlashCommand(request: any, value: any | null): void {
   request.resolve(value)
 }
 
-function startFlashCommandTimeout(request: any): void {
+function startFlashCommandTimeout(request: FlashCommandRequest): void {
   clearFlashCommandTimeout()
   flashCommandTimeoutId = setTimeout(() => {
     if (pendingFlashCommand != request || request.completed == true) {
@@ -2119,26 +2511,21 @@ function startFlashCommandTimeout(request: any): void {
   }, DEFAULT_FLASH_COMMAND_TIMEOUT_MS)
 }
 
-function sendFlashCommand(kind: string, command: Array<number>): Promise<any> {
+function sendFlashCommand(kind: string, command: Array<number>): Promise<RecordingResponse> {
   const readyError = ensureFlashReady()
   if (readyError != null) {
-    return rejectWith<any>(readyError)
+    return rejectWith<RecordingResponse>(readyError)
   }
-  if (pendingFlashCommand != null) {
-    return rejectWith<any>(
+  const pendingCommand = pendingFlashCommand
+  if (pendingCommand != null) {
+    return rejectWith<RecordingResponse>(
       makeError('flash_command_pending', '已有 Flash 协议命令正在等待响应', 'flash', true, {
-        kind: pendingFlashCommand.kind
+        kind: pendingCommand.kind
       })
     )
   }
-  return new Promise<any>((resolve, reject) => {
-    const request = {
-      kind,
-      generation: sessionGeneration,
-      completed: false,
-      resolve,
-      reject
-    }
+  return new Promise<RecordingResponse>((resolve, reject) => {
+    const request = new FlashCommandRequest(kind, sessionGeneration, resolve, reject)
     pendingFlashCommand = request
     startFlashCommandTimeout(request)
     pushDiagnostic('flash_command_enqueued', {
@@ -2166,19 +2553,72 @@ function sendFlashCommand(kind: string, command: Array<number>): Promise<any> {
   })
 }
 
-function queryFlashFileCount(): Promise<any> {
+function queryFlashFileCount(): Promise<RecordingResponse> {
   return sendFlashCommand('count', buildFlashGetFileCountCommand())
 }
 
-function queryFlashFileInfo(fileId: number): Promise<any> {
+function queryFlashFileInfo(fileId: number): Promise<RecordingResponse> {
   return sendFlashCommand('info', buildFlashGetFileInfoCommand(fileId))
 }
 
-function queryFlashDelete(fileId: number): Promise<any> {
+function queryFlashDelete(fileId: number): Promise<RecordingResponse> {
   return sendFlashCommand('delete', buildFlashDeleteCommand(fileId))
 }
 
-function handleFlashCommandResponse(response: any): void {
+function appendFlashFileInfo(result: Array<any>, info: FlashFileInfo): void {
+  result.push({
+    fileId: info.fileId,
+    fileLength: info.fileLength,
+    fileVersion: info.fileVersion,
+    blockNum: info.blockNum,
+    recordType: info.recordType,
+    channels: info.channels,
+    sampleRate: info.sampleRate,
+    bitRate: info.bitRate,
+    recordTime: info.recordTime,
+    btAddrHex: info.btAddrHex
+  })
+}
+
+function loadFlashFileInfos(fileIds: Array<number>, index: Int, results: Array<any>, resolve: (value: Array<any>) => void, reject: (error: any | null) => void): void {
+  if (index >= fileIds.length) {
+    flashFileListSnapshot.splice(0, flashFileListSnapshot.length)
+    results.forEach((item) => {
+      flashFileListSnapshot.push(item)
+    })
+    resolve(results)
+    return
+  }
+  queryFlashFileInfo(fileIds[index])
+    .then((infoResponse: RecordingResponse) => {
+      if (infoResponse.isFileExist == true && infoResponse.fileInfo != null) {
+        appendFlashFileInfo(results, infoResponse.fileInfo!)
+      }
+      loadFlashFileInfos(fileIds, index + 1, results, resolve, reject)
+    })
+    .catch((error) => {
+      reject(error)
+    })
+}
+
+function validateFlashDeleteOrder(fileId: number, deleteAfterSuccess: boolean): Promise<RecordingResponse> {
+  if (!deleteAfterSuccess) {
+    return Promise.resolve(new RecordingResponse())
+  }
+  return queryFlashFileCount().then((countResponse: RecordingResponse): RecordingResponse => {
+    if (countResponse.empty == true || countResponse.fileStartId != fileId) {
+      throw makeError('flash_delete_order_violation', '只能安全删除队首 Flash 文件', 'flash', false, {
+        requestedFileId: fileId,
+        headFileId: countResponse.fileStartId,
+        fileCount: countResponse.fileCount
+      })
+    }
+    flashHeadFileId = countResponse.fileStartId
+    return countResponse
+  })
+}
+
+function handleFlashCommandResponse(response: RecordingResponse): void {
   const request = pendingFlashCommand
   if (request == null) {
     pushDiagnostic('unexpected_flash_response', response)
@@ -2202,7 +2642,7 @@ function handleFlashCommandResponse(response: any): void {
   completeFlashCommand(request, response)
 }
 
-function markRecordingFileWriteError(session: any, error: any): void {
+function markRecordingFileWriteError(session: RecordingSession, error: any): void {
   if (session.fileWriteError != null) {
     return
   }
@@ -2224,18 +2664,18 @@ function deleteFileSilently(path: string): void {
   } catch (_error) {}
 }
 
-function recordingDecodedOutputPath(session: any, format: string): string {
+function recordingDecodedOutputPath(session: RecordingSession, format: string): string {
   return `${recordingOutputBasePath()}/${session.sessionId}.${format}`
 }
 
-function ensureRecordingDecodeLayout(session: any): void {
-  if (Number(session.frameCount) <= 0) {
+function ensureRecordingDecodeLayout(session: RecordingSession): void {
+  if (session.frameCount <= 0) {
     throw makeError('recording_empty', '录音没有收到可解码的音频帧', 'recording', true, recordingSessionSummary(session))
   }
-  if (Number(session.channels) != 1) {
+  if (session.channels != 1) {
     throw makeError('opus_decoder_channels_unsupported', '当前 Android decoder 仅支持单声道 OPUS', 'recording', true, recordingSessionSummary(session))
   }
-  if (Number(session.frameLen) != RECORDING_DECODER_FRAME_LEN || session.variableFrameLen == true) {
+  if (session.frameLen != RECORDING_DECODER_FRAME_LEN || session.variableFrameLen == true) {
     throw makeError(
       'opus_decoder_frame_layout_unsupported',
       '当前 Android decoder 仅支持 4B 帧头 + 80B OPUS payload 的连续帧文件',
@@ -2245,14 +2685,16 @@ function ensureRecordingDecodeLayout(session: any): void {
     )
   }
   const inputFile = new File(session.framesPath)
-  if (!inputFile.exists() || Number(inputFile.length()) <= 0) {
+  if (!inputFile.exists() || inputFile.length() <= 0) {
     throw makeError('opus_frame_file_missing', 'OPUS 帧诊断文件不存在或为空，无法解码', 'recording', true, recordingSessionSummary(session))
   }
 }
 
 function writeAscii(bytes: Array<number>, offset: number, value: string): void {
-  for (let index = 0; index < value.length; index++) {
-    bytes[offset + index] = value.charCodeAt(index) & 0xff
+  const baseOffset = offset as Int
+  for (let index: Int = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index)
+    bytes[baseOffset + index] = (code == null ? 0 : code) & 0xff
   }
 }
 
@@ -2290,22 +2732,23 @@ function rewriteWavHeader(path: string, pcmSize: number, sampleRate: number, cha
   }
 }
 
-function readFully(input: FileInputStream, buffer: ByteArray): number {
-  let total = 0
-  while (total < buffer.length) {
-    const readCount = input.read(buffer, total as Int, (buffer.length - total) as Int)
+function readFully(input: FileInputStream, buffer: ByteArray): Int {
+  let total: Int = 0
+  while (total < buffer.size) {
+    const readCount = input.read(buffer, total, buffer.size - total)
     if (readCount <= 0) {
       break
     }
-    total += Number(readCount)
+    total += readCount
   }
   return total
 }
 
 function opusPayloadFromFrame(frame: ByteArray): ByteArray {
   const payload: ByteArray = new ByteArray(RECORDING_DECODER_FRAME_LEN as Int)
-  for (let index = 0; index < RECORDING_DECODER_FRAME_LEN; index++) {
-    payload[index] = frame[index + RECORDING_FRAME_HEADER_LENGTH]
+  const headerLength = RECORDING_FRAME_HEADER_LENGTH as Int
+  for (let index: Int = 0; index < RECORDING_DECODER_FRAME_LEN; index++) {
+    payload[index] = frame[index + headerLength]
   }
   return payload
 }
@@ -2317,13 +2760,13 @@ function closeFileInputStream(input: FileInputStream | null): void {
   input.close()
 }
 
-function decodeRecordingFramesToWav(session: any, outputPath: string): any {
+function decodeRecordingFramesToWav(session: RecordingSession, outputPath: string): DecodeStats {
   let input: FileInputStream | null = null
   let output: FileOutputStream | null = null
   const decoder = new OpusDecoder()
-  let decodedFrames = 0
-  let failedFrames = 0
-  let pcmBytes = 0
+  let decodedFrames: Int = 0
+  let failedFrames: Int = 0
+  let pcmBytes: Int = 0
   try {
     if (!decoder.init()) {
       throw makeError('opus_decoder_init_failed', 'OPUS decoder 初始化失败', 'recording', true, recordingSessionSummary(session))
@@ -2335,10 +2778,10 @@ function decodeRecordingFramesToWav(session: any, outputPath: string): any {
     const frame = new ByteArray(RECORDING_DECODER_FRAME_BYTES as Int)
     let readCount = readFully(input, frame)
     while (readCount == RECORDING_DECODER_FRAME_BYTES) {
-      const pcm = decoder.decode(opusPayloadFromFrame(frame), RECORDING_DECODER_FRAME_SAMPLES)
+      const pcm = decoder.decode(opusPayloadFromFrame(frame), RECORDING_DECODER_FRAME_SAMPLES as Int)
       if (pcm != null) {
         output.write(pcm)
-        pcmBytes += byteArrayToNumbers(pcm).length
+        pcmBytes += pcm.size
         decodedFrames += 1
       } else {
         failedFrames += 1
@@ -2347,7 +2790,7 @@ function decodeRecordingFramesToWav(session: any, outputPath: string): any {
         emitDecodeProgress({
           sessionId: session.sessionId,
           phase: 'decoding',
-          progress: Math.floor(decodedFrames * 100 / Math.max(Number(session.frameCount), 1))
+          progress: Math.floor(decodedFrames * 100 / Math.max(session.frameCount, 1))
         })
       }
       readCount = readFully(input, frame)
@@ -2366,12 +2809,12 @@ function decodeRecordingFramesToWav(session: any, outputPath: string): any {
       closeOutputStream(output)
     } catch (_outputCloseError) {}
     deleteFileSilently(outputPath)
-    const maybeError = error as any
-    if (maybeError != null && maybeError.code != null && maybeError.area != null) {
-      throw maybeError as OleapBleNativeError
+    const maybeError = asNativeError(error)
+    if (maybeError != null) {
+      throw maybeError
     }
     const summary = recordingSessionSummary(session)
-    summary.error = `${error}`
+    summary['error'] = `${error}`
     throw makeError('opus_decode_failed', 'OPUS 解码失败', 'recording', true, summary)
   }
   try {
@@ -2387,28 +2830,24 @@ function decodeRecordingFramesToWav(session: any, outputPath: string): any {
   if (decodedFrames <= 0 || pcmBytes <= 0) {
     deleteFileSilently(outputPath)
     const summary = recordingSessionSummary(session)
-    summary.decodedFrames = decodedFrames
-    summary.failedFrames = failedFrames
+    summary['decodedFrames'] = decodedFrames
+    summary['failedFrames'] = failedFrames
     throw makeError('opus_decode_empty_output', 'OPUS 解码没有生成有效 PCM 数据', 'recording', true, summary)
   }
   const totalDecodedAttempts = decodedFrames + failedFrames
   if (totalDecodedAttempts > 0 && failedFrames / totalDecodedAttempts > RECORDING_DECODE_FAILURE_THRESHOLD) {
     deleteFileSilently(outputPath)
     const summary = recordingSessionSummary(session)
-    summary.decodedFrames = decodedFrames
-    summary.failedFrames = failedFrames
-    summary.failureThreshold = RECORDING_DECODE_FAILURE_THRESHOLD
+    summary['decodedFrames'] = decodedFrames
+    summary['failedFrames'] = failedFrames
+    summary['failureThreshold'] = RECORDING_DECODE_FAILURE_THRESHOLD
     throw makeError('opus_decode_corruption_threshold', 'OPUS 解码失败帧比例过高', 'recording', true, summary)
   }
   rewriteWavHeader(outputPath, pcmBytes, RECORDING_SAMPLE_RATE, 1, RECORDING_PCM_BITS_PER_SAMPLE)
-  return {
-    decodedFrames,
-    failedFrames,
-    pcmBytes
-  }
+  return new DecodeStats(decodedFrames, failedFrames, pcmBytes)
 }
 
-function decodeRecordingFramesToMp3(session: any, outputPath: string): any {
+function decodeRecordingFramesToMp3(session: RecordingSession, outputPath: string): DecodeStats {
   const decoder = new OpusDecoder()
   try {
     decoder.decodeOpusToMp3(session.framesPath, outputPath)
@@ -2418,20 +2857,16 @@ function decodeRecordingFramesToMp3(session: any, outputPath: string): any {
     } catch (_releaseError) {}
     deleteFileSilently(outputPath)
     const summary = recordingSessionSummary(session)
-    summary.error = `${error}`
+    summary['error'] = `${error}`
     throw makeError('opus_decode_failed', 'OPUS MP3 解码失败', 'recording', true, summary)
   }
   try {
     decoder.release()
   } catch (_releaseError) {}
-  return {
-    decodedFrames: session.frameCount,
-    failedFrames: 0,
-    pcmBytes: 0
-  }
+  return new DecodeStats(session.frameCount, 0, 0)
 }
 
-function decodeRecordingSession(session: any, format: string): any {
+function decodeRecordingSession(session: RecordingSession, format: string): RecordingResult {
   ensureRecordingDecodeLayout(session)
   const outputPath = recordingDecodedOutputPath(session, format)
   deleteFileSilently(outputPath)
@@ -2446,12 +2881,12 @@ function decodeRecordingSession(session: any, format: string): any {
 
   const outputFile = new File(outputPath)
   const minimumSize = format == 'wav' ? 44 : 1
-  if (!outputFile.exists() || Number(outputFile.length()) <= minimumSize) {
+  if (!outputFile.exists() || outputFile.length() <= minimumSize) {
     deleteFileSilently(outputPath)
     const summary = recordingSessionSummary(session)
-    summary.format = format
-    summary.outputPath = outputPath
-    summary.minimumSize = minimumSize
+    summary['format'] = format
+    summary['outputPath'] = outputPath
+    summary['minimumSize'] = minimumSize
     throw makeError('opus_decode_empty_output', 'OPUS 解码没有生成有效音频文件', 'recording', true, summary)
   }
   emitDecodeProgress({
@@ -2459,73 +2894,71 @@ function decodeRecordingSession(session: any, format: string): any {
     phase: 'finalizing',
     progress: 100
   })
-  return {
-    filePath: outputPath,
-    format,
-    durationMs: session.durationMs,
-    sampleRate: session.sampleRate,
-    channels: session.channels,
-    frameCount: session.frameCount,
-    frameLen: session.frameLen,
-    decodedFrames: decodeStats.decodedFrames,
-    failedFrames: decodeStats.failedFrames,
-    pcmBytes: decodeStats.pcmBytes,
-    lostFrames: session.lostFrames,
-    outOfOrderFrames: session.outOfOrderFrames,
-    badFrames: session.badFrames,
-    size: Number(outputFile.length()),
-    source: session.source == null ? 'realtime' : session.source,
-    fileId: session.fileId == null ? null : session.fileId,
-    opusRawPath: session.opusRawPath,
-    framesPath: session.framesPath
-  }
+  const result = new RecordingResult(outputPath, format)
+  result.durationMs = session.durationMs
+  result.sampleRate = session.sampleRate
+  result.channels = session.channels
+  result.frameCount = session.frameCount
+  result.frameLen = session.frameLen
+  result.decodedFrames = decodeStats.decodedFrames
+  result.failedFrames = decodeStats.failedFrames
+  result.pcmBytes = decodeStats.pcmBytes
+  result.lostFrames = session.lostFrames
+  result.outOfOrderFrames = session.outOfOrderFrames
+  result.badFrames = session.badFrames
+  result.size = outputFile.length()
+  result.source = session.source
+  result.fileId = session.fileId
+  result.opusRawPath = session.opusRawPath
+  result.framesPath = session.framesPath
+  return result
 }
 
-function updateRecordingIndexStats(session: any, dataIndex: number): void {
+function updateRecordingIndexStats(session: RecordingSession, dataIndex: number): void {
   if (session.lastIndex == null) {
     session.lastIndex = dataIndex
     return
   }
-  const expected = (Number(session.lastIndex) + 1) & 0xffff
+  const expected = ((session.lastIndex as number) + 1) & 0xffff
   if (dataIndex != expected) {
     const forwardGap = (dataIndex - expected + 65536) % 65536
     if (forwardGap > 0 && forwardGap < 32768) {
-      session.lostFrames = Number(session.lostFrames) + forwardGap
+      session.lostFrames += forwardGap
     } else {
-      session.outOfOrderFrames = Number(session.outOfOrderFrames) + 1
+      session.outOfOrderFrames += 1
     }
   }
   session.lastIndex = dataIndex
 }
 
-function appendRecordingFramesToSession(session: any, response: any, diagnosticEvent: string): void {
+function appendRecordingFramesToSession(session: RecordingSession, response: RecordingResponse, diagnosticEvent: string): void {
   const payloadBatch = new Array<number>()
   const rawBatch = new Array<number>()
-  const frames = response.frames as Array<any>
+  const frames = response.frames
   for (let index = 0; index < frames.length; index++) {
     const frame = frames[index]
-    updateRecordingIndexStats(session, Number(frame.dataIndex))
-    session.frameCount = Number(session.frameCount) + 1
-    if (Number(session.frameLen) == 0) {
-      session.frameLen = Number(frame.frameLen)
-    } else if (Number(session.frameLen) != Number(frame.frameLen)) {
+    updateRecordingIndexStats(session, frame.dataIndex)
+    session.frameCount += 1
+    if (session.frameLen == 0) {
+      session.frameLen = frame.frameLen
+    } else if (session.frameLen != frame.frameLen) {
       session.variableFrameLen = true
     }
-    session.durationMs = Number(session.durationMs) + Number(frame.frameTimeMs)
-    session.channels = Number(frame.channels)
-    session.bitrate = Number(frame.bitrate)
-    const payload = frame.payload as Array<number>
-    const rawFrame = frame.rawFrame as Array<number>
+    session.durationMs += frame.frameTimeMs
+    session.channels = frame.channels
+    session.bitrate = frame.bitrate
+    const payload = frame.payload
+    const rawFrame = frame.rawFrame
     for (let payloadIndex = 0; payloadIndex < payload.length; payloadIndex++) {
       payloadBatch.push(payload[payloadIndex] & 0xff)
     }
     for (let rawIndex = 0; rawIndex < rawFrame.length; rawIndex++) {
       rawBatch.push(rawFrame[rawIndex] & 0xff)
     }
-    session.opusPayloadBytes = Number(session.opusPayloadBytes) + payload.length
-    session.framedBytes = Number(session.framedBytes) + rawFrame.length
+    session.opusPayloadBytes += payload.length
+    session.framedBytes += rawFrame.length
   }
-  session.badFrames = Number(session.badFrames) + Number(response.badFrames)
+  session.badFrames += response.badFrames
   if (payloadBatch.length > 0 || rawBatch.length > 0) {
     try {
       appendBytesToOutputStream(session.opusRawStream, payloadBatch)
@@ -2545,7 +2978,7 @@ function appendRecordingFramesToSession(session: any, response: any, diagnosticE
   emitRecordingProgress(session)
 }
 
-function handleRecordingFrames(response: any): void {
+function handleRecordingFrames(response: RecordingResponse): void {
   const session = recordingSession
   if (session == null) {
     pushDiagnostic('recording_frames_without_session', {
@@ -2557,7 +2990,7 @@ function handleRecordingFrames(response: any): void {
   appendRecordingFramesToSession(session, response, 'recording_frames_received')
 }
 
-function startFlashDownloadTimeout(active: any): void {
+function startFlashDownloadTimeout(active: FlashDownloadSession): void {
   clearFlashDownloadTimeout()
   flashDownloadTimeoutId = setTimeout(() => {
     if (flashSession != active || active.completed == true) {
@@ -2577,18 +3010,18 @@ function startFlashDownloadTimeout(active: any): void {
   }, FLASH_DOWNLOAD_FRAME_TIMEOUT_MS)
 }
 
-function flashProgressOf(session: any): number {
-  const expected = Number(session.expectedBytes)
+function flashProgressOf(session: RecordingSession): number {
+  const expected = session.expectedBytes
   if (expected <= 0) {
     return 0
   }
-  const value = Math.floor(Number(session.downloadedBytes) * 100 / expected)
+  const value = Math.floor(session.downloadedBytes * 100 / expected)
   if (value < 0) return 0
   if (value > 100) return 100
   return value
 }
 
-function finalizeFlashDownloadSession(active: any): void {
+function finalizeFlashDownloadSession(active: FlashDownloadSession | null): void {
   if (active == null || active.completed == true) {
     return
   }
@@ -2616,11 +3049,12 @@ function finalizeFlashDownloadSession(active: any): void {
     if (active.deleteAfterSuccess == true) {
       queryFlashDelete(active.fileInfo.fileId)
         .then((deleteResult) => {
-          if (deleteResult.status != FLASH_DELETE_STATUS_SUCCESS) {
+          const deleteResponse = deleteResult as RecordingResponse
+          if (deleteResponse.status != FLASH_DELETE_STATUS_SUCCESS) {
             const details = {
               fileId: active.fileInfo.fileId,
-              status: deleteResult.status,
-              currentHeadFileId: deleteResult.fileId
+              status: deleteResponse.status,
+              currentHeadFileId: deleteResponse.fileId
             }
             const error = makeError('flash_delete_failed', 'Flash 文件下载成功，但删除失败', 'flash', true, details)
             emitError(error)
@@ -2628,7 +3062,7 @@ function finalizeFlashDownloadSession(active: any): void {
             return
           }
           result.deleted = true
-          result.nextFileId = deleteResult.fileId
+          result.nextFileId = deleteResponse.fileId
           active.resolve(result)
         })
         .catch((error) => {
@@ -2638,9 +3072,9 @@ function finalizeFlashDownloadSession(active: any): void {
     }
     active.resolve(result)
   } catch (error) {
-    const maybeError = error as any
-    if (maybeError != null && maybeError.code != null && maybeError.area != null) {
-      emitError(maybeError as OleapBleNativeError)
+    const maybeError = asNativeError(error)
+    if (maybeError != null) {
+      emitError(maybeError)
       active.reject(maybeError)
       return
     }
@@ -2654,7 +3088,7 @@ function finalizeFlashDownloadSession(active: any): void {
   }
 }
 
-function handleFlashDownloadResponse(response: any): void {
+function handleFlashDownloadResponse(response: RecordingResponse): void {
   const active = flashSession
   if (active == null) {
     pushDiagnostic('unexpected_flash_download_response', response)
@@ -2671,16 +3105,13 @@ function handleFlashDownloadResponse(response: any): void {
     return
   }
 
-  const declaredBytes = Number(response.returnLength)
-  const data = response.fileData as Array<number>
+  const declaredBytes = response.returnLength
+  const data = response.fileData
   const dataLength = declaredBytes < data.length ? declaredBytes : data.length
   const frameBytes = byteSlice(data, 0, dataLength)
   const split = splitRecordingFrames(frameBytes)
-  appendRecordingFramesToSession(active.session, {
-    frames: split.frames,
-    badFrames: split.badFrames
-  }, 'flash_frames_received')
-  active.session.downloadedBytes = Number(response.startAddress) + dataLength
+  appendRecordingFramesToSession(active.session, split, 'flash_frames_received')
+  active.session.downloadedBytes = response.startAddress + dataLength
   active.session.progress = flashProgressOf(active.session)
   pushDiagnostic('flash_download_chunk', {
     fileId: active.fileInfo.fileId,
@@ -2693,15 +3124,15 @@ function handleFlashDownloadResponse(response: any): void {
   })
   emitRecordingProgress(active.session, true)
 
-  const expectedBytes = Number(active.session.expectedBytes)
-  if (response.completed == true || (expectedBytes > 0 && Number(active.session.downloadedBytes) >= expectedBytes)) {
+  const expectedBytes = active.session.expectedBytes
+  if (response.completed == true || (expectedBytes > 0 && active.session.downloadedBytes >= expectedBytes)) {
     finalizeFlashDownloadSession(active)
     return
   }
   startFlashDownloadTimeout(active)
 }
 
-function handleRecordingStartResponse(response: any): void {
+function handleRecordingStartResponse(response: RecordingResponse): void {
   const request = pendingRecordingCommand
   if (request == null || request.kind != 'start') {
     pushDiagnostic('unexpected_recording_start_response', response)
@@ -2748,7 +3179,7 @@ function handleRecordingStartResponse(response: any): void {
   }
 }
 
-function handleRecordingStopResponse(response: any): void {
+function handleRecordingStopResponse(response: RecordingResponse): void {
   const request = pendingRecordingCommand
   const session = recordingSession
   if (request == null || request.kind != 'stop') {
@@ -2774,8 +3205,8 @@ function handleRecordingStopResponse(response: any): void {
   recordingSession = null
 
   const summary = recordingSessionSummary(session)
-  summary.stopReason = response.stopReason
-  summary.stopReasonScene = response.stopReasonScene
+  summary['stopReason'] = response.stopReason
+  summary['stopReasonScene'] = response.stopReasonScene
   pushDiagnostic('recording_session_stopped', summary)
 
   if (session.fileWriteError != null) {
@@ -2796,13 +3227,13 @@ function handleRecordingStopResponse(response: any): void {
     })
     completeRecordingCommand(request, result)
   } catch (error) {
-    const maybeError = error as any
-    if (maybeError != null && maybeError.code != null && maybeError.area != null) {
-      rejectRecordingCommand(request, maybeError as OleapBleNativeError)
+    const maybeError = asNativeError(error)
+    if (maybeError != null) {
+      rejectRecordingCommand(request, maybeError)
       return
     }
-    summary.requestedFormat = request.format
-    summary.error = `${error}`
+    summary['requestedFormat'] = request.format
+    summary['error'] = `${error}`
     rejectRecordingCommand(
       request,
       makeError('opus_decode_failed', 'OPUS 解码失败', 'recording', true, summary)
@@ -2839,10 +3270,10 @@ function handleRecordNotify(bytes: Array<number>, generation: number): void {
     }
     handleRecordingFrames(response)
   } catch (error) {
-    const maybeError = error as any
+    const maybeError = asNativeError(error)
     let nativeError: OleapBleNativeError
-    if (maybeError != null && maybeError.code != null && maybeError.area != null) {
-      nativeError = maybeError as OleapBleNativeError
+    if (maybeError != null) {
+      nativeError = maybeError
     } else {
       nativeError = makeError('recording_protocol_error', '录音协议解析失败', 'recording', true, {
         error: `${error}`,
@@ -3059,14 +3490,16 @@ function writeByChannel(channel: string, value: Array<number>, withoutResponse: 
   }
 
   return new Promise<void>((resolve, reject) => {
-    writeQueue.push({
+    writeQueue.push(new WriteRequest(
       channel,
       value,
       withoutResponse,
-      generation: sessionGeneration,
-      resolve,
+      sessionGeneration,
+      () => {
+        resolve()
+      },
       reject
-    })
+    ))
     pushDiagnostic('write_queued', {
       channel,
       length: value.length,
@@ -3176,7 +3609,7 @@ class OleapGattCallback extends BluetoothGattCallback {
     }
     pushDiagnostic('services_discovered', {
       status,
-      serviceCount: gatt.getServices().size(),
+      serviceCount: gatt.getServices().size,
       generation: sessionGeneration
     })
     if (status != BluetoothGatt.GATT_SUCCESS) {
@@ -3368,6 +3801,7 @@ export function getBluetoothState(): Promise<any> {
   const state = {
     supported: adapter != null,
     enabled: adapter != null && adapter.isEnabled(),
+    permissionGranted: hasRequiredPermissions(),
     androidSdk: Build.VERSION.SDK_INT
   }
   pushDiagnostic('bluetooth_state', state)
@@ -3412,10 +3846,8 @@ export function startScan(options: any | null = null): Promise<void> {
   try {
     scanner.startScan(null, settings, callback)
     scanning = true
-    const requestedTimeoutMs = options != null && options.timeoutMs != null
-      ? Number(options.timeoutMs)
-      : DEFAULT_SCAN_TIMEOUT_MS
-    const timeoutMs = requestedTimeoutMs > 0 ? requestedTimeoutMs : DEFAULT_SCAN_TIMEOUT_MS
+    const requestedTimeoutMs = optionInt(options, 'timeoutMs', DEFAULT_SCAN_TIMEOUT_MS)
+    const timeoutMs: Int = requestedTimeoutMs > 0 ? requestedTimeoutMs : DEFAULT_SCAN_TIMEOUT_MS
     scanTimeoutId = setTimeout(() => {
       stopScanInternal(true)
     }, timeoutMs)
@@ -3468,7 +3900,8 @@ export function connect(options: any): Promise<any> {
       makeError('bluetooth_off', '系统蓝牙未开启', 'bluetooth', true)
     )
   }
-  if (options == null || options.deviceId == null || `${options.deviceId}`.length == 0) {
+  const deviceId = optionString(options, 'deviceId', null)
+  if (deviceId == null || deviceId.length == 0) {
     return rejectWith<any>(
       makeError('device_id_required', 'connect 需要传入 deviceId', 'connection', false)
     )
@@ -3485,15 +3918,14 @@ export function connect(options: any): Promise<any> {
   clearCharacteristicCache()
   const generationAtStart = sessionGeneration
   connecting = true
-  pendingDeviceId = `${options.deviceId}`
-  pendingDeviceName = options.name == null ? null : `${options.name}`
+  pendingDeviceId = deviceId
+  pendingDeviceName = optionString(options, 'name', null)
 
   return new Promise<any>((resolve, reject) => {
     pendingConnectResolve = resolve
     pendingConnectReject = reject
-    const timeoutMs = options.timeoutMs != null && Number(options.timeoutMs) > 0
-      ? Number(options.timeoutMs)
-      : DEFAULT_CONNECT_TIMEOUT_MS
+    const requestedTimeoutMs = optionInt(options, 'timeoutMs', DEFAULT_CONNECT_TIMEOUT_MS)
+    const timeoutMs: Int = requestedTimeoutMs > 0 ? requestedTimeoutMs : DEFAULT_CONNECT_TIMEOUT_MS
     connectTimeoutId = setTimeout(() => {
       const error = makeError(
         'connect_timeout',
@@ -3512,12 +3944,12 @@ export function connect(options: any): Promise<any> {
     }, timeoutMs)
 
     try {
-      const remoteDevice = adapter.getRemoteDevice(`${options.deviceId}`)
+      const remoteDevice = adapter.getRemoteDevice(deviceId)
       const callback = new OleapGattCallback(generationAtStart)
       gattCallback = callback
       connectedGatt = remoteDevice.connectGatt(context, false, callback)
       pushDiagnostic('connect_start', {
-        deviceId: options.deviceId,
+        deviceId,
         timeoutMs,
         generation: generationAtStart
       })
@@ -3527,7 +3959,7 @@ export function connect(options: any): Promise<any> {
         '启动 Android GATT 连接失败',
         'connection',
         true,
-        { error: `${error}`, deviceId: options.deviceId }
+        { error: `${error}`, deviceId }
       )
       closeGatt(true)
       rejectPendingConnect(connectError)
@@ -3560,49 +3992,49 @@ export function getConnectionState(): any {
 }
 
 export function getBattery(): Promise<number> {
-  return queryDp(DP_ID_BATTERY).then((event) => {
-    return Number(event.value)
+  return queryDp(DP_ID_BATTERY).then((event: DpEvent | null): number => {
+    return event == null ? 0 : (event.value as number)
   })
 }
 
 export function getSn(): Promise<string> {
-  return queryDp(DP_ID_SN).then((event) => {
-    return `${event.value}`
+  return queryDp(DP_ID_SN).then((event: DpEvent | null): string => {
+    return event == null ? '' : `${event.value}`
   })
 }
 
 export function getDeviceName(): Promise<string> {
-  return queryDp(DP_ID_DEVICE_NAME).then((event) => {
-    return `${event.value}`
+  return queryDp(DP_ID_DEVICE_NAME).then((event: DpEvent | null): string => {
+    return event == null ? '' : `${event.value}`
   })
 }
 
 export function getFirmwareVersion(): Promise<string> {
-  return queryDp(DP_ID_FIRMWARE_VERSION).then((event) => {
-    return `${event.value}`
+  return queryDp(DP_ID_FIRMWARE_VERSION).then((event: DpEvent | null): string => {
+    return event == null ? '' : `${event.value}`
   })
 }
 
 export function getHardwareVersion(): Promise<string> {
-  return queryDp(DP_ID_HARDWARE_VERSION).then((event) => {
-    return `${event.value}`
+  return queryDp(DP_ID_HARDWARE_VERSION).then((event: DpEvent | null): string => {
+    return event == null ? '' : `${event.value}`
   })
 }
 
 export function getEqMode(): Promise<any> {
-  return queryDp(DP_ID_EQ_MODE).then((event) => {
-    return event.value
+  return queryDp(DP_ID_EQ_MODE).then((event: DpEvent | null): any => {
+    return event == null ? {} : nonNullAny(event.value)
   })
 }
 
 export function setEqMode(options: any): Promise<any> {
-  const mode = options == null || options.mode == null ? -1 : Number(options.mode)
-  if (mode < 0 || mode > 255 || Math.floor(mode) != mode) {
+  const mode = optionInt(options, 'mode', -1)
+  if (mode < 0 || mode > 255) {
     return rejectWith<any>(
       makeError('invalid_eq_mode', 'EQ 模式必须是 0-255 的整数', 'control', false, { mode })
     )
   }
-  return writeDp(DP_ID_EQ_MODE, DP_TYPE_RAW, [mode]).then((event) => {
+  return writeDp(DP_ID_EQ_MODE, DP_TYPE_RAW, [mode]).then((event: DpEvent | null): any => {
     if (event == null) {
       return {
         modeCount: 0,
@@ -3610,19 +4042,19 @@ export function setEqMode(options: any): Promise<any> {
         raw: [mode]
       }
     }
-    return event.value
+    return nonNullAny(event.value)
   })
 }
 
 export function getRecordState(): Promise<any> {
-  return queryDp(DP_ID_RECORD_STATE).then((event) => {
-    return event.value
+  return queryDp(DP_ID_RECORD_STATE).then((event: DpEvent | null): any => {
+    return event == null ? {} : nonNullAny(event.value)
   })
 }
 
 export function getFlashCapacity(): Promise<any> {
-  return queryDp(DP_ID_FLASH_CAPACITY).then((event) => {
-    return event.value
+  return queryDp(DP_ID_FLASH_CAPACITY).then((event: DpEvent | null): any => {
+    return event == null ? {} : nonNullAny(event.value)
   })
 }
 
@@ -3643,28 +4075,30 @@ export function startRecording(options: any | null = null): Promise<any> {
   if (readyError != null) {
     return rejectWith<any>(readyError)
   }
-  if (recordingSession != null) {
+  const activeSession = recordingSession
+  if (activeSession != null) {
     return rejectWith<any>(
       makeError('recording_already_active', '已有实时录音正在进行', 'recording', true, {
-        sessionId: recordingSession.sessionId
+        sessionId: activeSession.sessionId
       })
     )
   }
-  if (pendingRecordingCommand != null) {
+  const pendingCommand = pendingRecordingCommand
+  if (pendingCommand != null) {
     return rejectWith<any>(
       makeError('recording_command_pending', '已有录音协议命令正在等待响应', 'recording', true, {
-        kind: pendingRecordingCommand.kind
+        kind: pendingCommand.kind
       })
     )
   }
 
-  let scene: any
+  let scene: RecordingSceneCommand
   try {
-    scene = recordingSceneCommandOf(options == null ? null : options.scene)
+    scene = recordingSceneCommandOf(optionValue(options, 'scene'))
   } catch (error) {
-    const maybeError = error as any
-    if (maybeError != null && maybeError.code != null && maybeError.area != null) {
-      return rejectWith<any>(maybeError as OleapBleNativeError)
+    const maybeError = asNativeError(error)
+    if (maybeError != null) {
+      return rejectWith<any>(maybeError)
     }
     return rejectWith<any>(
       makeError('invalid_recording_scene', '录音场景不支持', 'recording', false, { error: `${error}` })
@@ -3672,21 +4106,14 @@ export function startRecording(options: any | null = null): Promise<any> {
   }
 
   return new Promise<any>((resolve, reject) => {
-    const command = buildRecordingCommand(Number(scene.command), [0])
-    const request = {
-      kind: 'start',
-      scene: scene.scene,
-      command,
-      generation: sessionGeneration,
-      completed: false,
-      resolve,
-      reject
-    }
+    const command = buildRecordingCommand(scene.command, [0])
+    const request = new RecordingCommandRequest('start', command, sessionGeneration, resolve, reject)
+    request.scene = scene.scene
     pendingRecordingCommand = request
     startRecordingCommandTimeout(request)
     pushDiagnostic('recording_start_enqueued', {
       scene: scene.scene,
-      command: Number(scene.command),
+      command: scene.command,
       generation: sessionGeneration
     })
     writeRecordBytes(command, false)
@@ -3715,15 +4142,17 @@ export function stopRecording(options: any | null = null): Promise<any> {
   if (readyError != null) {
     return rejectWith<any>(readyError)
   }
-  if (recordingSession == null) {
+  const activeSession = recordingSession
+  if (activeSession == null) {
     return rejectWith<any>(
       makeError('recording_not_active', '当前没有正在进行的实时录音', 'recording', true)
     )
   }
-  if (pendingRecordingCommand != null) {
+  const pendingCommand = pendingRecordingCommand
+  if (pendingCommand != null) {
     return rejectWith<any>(
       makeError('recording_command_pending', '已有录音协议命令正在等待响应', 'recording', true, {
-        kind: pendingRecordingCommand.kind
+        kind: pendingCommand.kind
       })
     )
   }
@@ -3732,9 +4161,9 @@ export function stopRecording(options: any | null = null): Promise<any> {
   try {
     format = requestedRecordingFormatOf(options)
   } catch (error) {
-    const maybeError = error as any
-    if (maybeError != null && maybeError.code != null && maybeError.area != null) {
-      return rejectWith<any>(maybeError as OleapBleNativeError)
+    const maybeError = asNativeError(error)
+    if (maybeError != null) {
+      return rejectWith<any>(maybeError)
     }
     return rejectWith<any>(
       makeError('invalid_recording_format', '录音输出格式仅支持 wav 或 mp3', 'recording', false, { error: `${error}` })
@@ -3743,19 +4172,12 @@ export function stopRecording(options: any | null = null): Promise<any> {
 
   return new Promise<any>((resolve, reject) => {
     const command = buildRecordingCommand(RECORDING_COMMAND_STOP, [1])
-    const request = {
-      kind: 'stop',
-      format,
-      command,
-      generation: sessionGeneration,
-      completed: false,
-      resolve,
-      reject
-    }
+    const request = new RecordingCommandRequest('stop', command, sessionGeneration, resolve, reject)
+    request.format = format
     pendingRecordingCommand = request
     startRecordingCommandTimeout(request)
     pushDiagnostic('recording_stop_enqueued', {
-      sessionId: recordingSession.sessionId,
+      sessionId: activeSession.sessionId,
       requestedFormat: format,
       generation: sessionGeneration
     })
@@ -3771,7 +4193,7 @@ export function stopRecording(options: any | null = null): Promise<any> {
           request,
           makeError('recording_write_failed', '录音停止命令写入失败', 'recording', true, {
             kind: 'stop',
-            sessionId: recordingSession == null ? null : recordingSession.sessionId,
+            sessionId: activeSession.sessionId,
             error: `${error}`
           })
         )
@@ -3779,54 +4201,22 @@ export function stopRecording(options: any | null = null): Promise<any> {
   })
 }
 
-export function listFlashRecordings(): Promise<any> {
-  return queryFlashFileCount().then((countResponse) => {
+export function listFlashRecordings(): Promise<Array<any>> {
+  return queryFlashFileCount().then((countResponse: RecordingResponse): Promise<Array<any>> => {
     if (countResponse.empty == true) {
       flashHeadFileId = null
       flashFileListSnapshot.splice(0, flashFileListSnapshot.length)
-      return new Array<any>()
+      return Promise.resolve(new Array<any>())
     }
     flashHeadFileId = countResponse.fileStartId
-    const count = Math.min(Number(countResponse.fileCount), 64)
+    const count = (countResponse.fileCount > 64 ? 64 : countResponse.fileCount) as Int
     const fileIds = new Array<number>()
-    for (let index = 0; index < count; index++) {
-      fileIds.push(normalizeUint32(Number(countResponse.fileStartId) + index))
+    for (let index: Int = 0; index < count; index++) {
+      fileIds.push(normalizeUint32(countResponse.fileStartId + index))
     }
-    return new Promise<any>((resolve, reject) => {
+    return new Promise<Array<any>>((resolve, reject) => {
       const results = new Array<any>()
-      const loadNext = (index: number): void => {
-        if (index >= fileIds.length) {
-          flashFileListSnapshot.splice(0, flashFileListSnapshot.length)
-          results.forEach((item) => {
-            flashFileListSnapshot.push(item)
-          })
-          resolve(results)
-          return
-        }
-        queryFlashFileInfo(fileIds[index])
-          .then((infoResponse) => {
-            if (infoResponse.isFileExist == true) {
-              const info = infoResponse.fileInfo
-              results.push({
-                fileId: info.fileId,
-                fileLength: info.fileLength,
-                fileVersion: info.fileVersion,
-                blockNum: info.blockNum,
-                recordType: info.recordType,
-                channels: info.channels,
-                sampleRate: info.sampleRate,
-                bitRate: info.bitRate,
-                recordTime: info.recordTime,
-                btAddrHex: info.btAddrHex
-              })
-            }
-            loadNext(index + 1)
-          })
-          .catch((error) => {
-            reject(error)
-          })
-      }
-      loadNext(0)
+      loadFlashFileInfos(fileIds, 0, results, resolve, reject)
     })
   })
 }
@@ -3836,10 +4226,11 @@ export function downloadFlashRecording(options: any): Promise<any> {
   if (readyError != null) {
     return rejectWith<any>(readyError)
   }
-  if (pendingFlashCommand != null) {
+  const pendingCommand = pendingFlashCommand
+  if (pendingCommand != null) {
     return rejectWith<any>(
       makeError('flash_command_pending', '已有 Flash 协议命令正在等待响应', 'flash', true, {
-        kind: pendingFlashCommand.kind
+        kind: pendingCommand.kind
       })
     )
   }
@@ -3848,77 +4239,66 @@ export function downloadFlashRecording(options: any): Promise<any> {
   try {
     format = requestedRecordingFormatOf(options)
   } catch (error) {
-    const maybeError = error as any
-    if (maybeError != null && maybeError.code != null && maybeError.area != null) {
-      return rejectWith<any>(maybeError as OleapBleNativeError)
+    const maybeError = asNativeError(error)
+    if (maybeError != null) {
+      return rejectWith<any>(maybeError)
     }
     return rejectWith<any>(
       makeError('invalid_recording_format', '录音输出格式仅支持 wav 或 mp3', 'flash', false, { error: `${error}` })
     )
   }
 
-  if (options == null || options.fileId == null) {
-    return listFlashRecordings().then((files) => {
+  const requestedFileId = optionValue(options, 'fileId')
+  const deleteAfterSuccess = optionBoolean(options, 'deleteAfterSuccess', false)
+  if (requestedFileId == null) {
+    return listFlashRecordings().then((files: Array<any>): Promise<any> => {
       if (files.length == 0) {
         return rejectWith<any>(
           makeError('flash_file_missing', '没有可下载的 Flash 文件', 'flash', true)
         )
       }
-      const first = files[0]
+      const firstItem = files[0]
+      if (firstItem == null) {
+        return rejectWith<any>(
+          makeError('flash_file_id_missing', 'Flash 文件列表缺少 fileId', 'flash', true)
+        )
+      }
+      const first = new UTSJSONObject(firstItem)
+      const firstFileId = first.getNumber('fileId')
+      if (firstFileId == null || firstFileId < 0) {
+        return rejectWith<any>(
+          makeError('flash_file_id_missing', 'Flash 文件列表缺少 fileId', 'flash', true)
+        )
+      }
       return downloadFlashRecording({
-        fileId: first.fileId,
+        fileId: firstFileId,
         format,
-        deleteAfterSuccess: options == null ? false : options.deleteAfterSuccess == true
+        deleteAfterSuccess
       })
     })
   }
 
-  const fileId = Number(options.fileId)
-  if (!Number.isFinite(fileId) || fileId < 0) {
+  const fileId = optionInt(options, 'fileId', -1)
+  if (isNaN(fileId) || fileId < 0) {
     return rejectWith<any>(
       makeError('invalid_flash_file_id', 'Flash fileId 必须是非负整数', 'flash', false, {
-        fileId: options.fileId
+        fileId: requestedFileId
       })
     )
   }
-  const deleteAfterSuccess = options.deleteAfterSuccess == true
 
-  const validateDeleteOrder = deleteAfterSuccess
-    ? queryFlashFileCount().then((countResponse) => {
-        if (countResponse.empty == true || Number(countResponse.fileStartId) != fileId) {
-          return Promise.reject<any>(
-            makeError('flash_delete_order_violation', '只能安全删除队首 Flash 文件', 'flash', false, {
-              requestedFileId: fileId,
-              headFileId: countResponse.fileStartId,
-              fileCount: countResponse.fileCount
-            })
-          )
-        }
-        flashHeadFileId = countResponse.fileStartId
-        return countResponse
-      })
-    : Promise.resolve(null)
-
-  return validateDeleteOrder
-    .then(() => queryFlashFileInfo(fileId))
-    .then((infoResponse) => {
-      if (infoResponse.isFileExist != true) {
+  return validateFlashDeleteOrder(fileId, deleteAfterSuccess)
+    .then((_countResponse: RecordingResponse): Promise<RecordingResponse> => queryFlashFileInfo(fileId))
+    .then((infoResponse: RecordingResponse): Promise<any> => {
+      if (infoResponse.isFileExist != true || infoResponse.fileInfo == null) {
         return rejectWith<any>(
           makeError('flash_file_missing', 'Flash 文件不存在', 'flash', true, { fileId })
         )
       }
       return new Promise<any>((resolve, reject) => {
-        const fileInfo = infoResponse.fileInfo
+        const fileInfo = infoResponse.fileInfo!
         const session = createFlashRecordingSession(fileInfo)
-        const active = {
-          fileInfo,
-          format,
-          deleteAfterSuccess,
-          session,
-          completed: false,
-          resolve,
-          reject
-        }
+        const active = new FlashDownloadSession(fileInfo, format, deleteAfterSuccess, session, resolve, reject)
         flashSession = active
         emitRecordingProgress(session, true)
         const command = buildFlashDownloadCommand(fileId, 0, true)
@@ -4018,6 +4398,11 @@ export function onError(callback: NativeErrorCallback): () => void {
 }
 
 export function getDiagnostics(): any {
+  const activeControl = activeControlTransaction
+  const activeRecording = recordingSession
+  const pendingRecording = pendingRecordingCommand
+  const activeFlash = flashSession
+  const pendingFlash = pendingFlashCommand
   return {
     version: SDK_VERSION,
     platform: 'android',
@@ -4027,38 +4412,38 @@ export function getDiagnostics(): any {
     generation: sessionGeneration,
     channels: channelReadySnapshot(),
     control: {
-      active: activeControlTransaction == null
+      active: activeControl == null
         ? null
         : {
-            kind: activeControlTransaction.kind,
-            dpId: activeControlTransaction.dpId,
-            sendSn: activeControlTransaction.sendSn,
-            attempts: activeControlTransaction.attempts,
-            generation: activeControlTransaction.generation
+            kind: activeControl.kind,
+            dpId: activeControl.dpId,
+            sendSn: activeControl.sendSn,
+            attempts: activeControl.attempts,
+            generation: activeControl.generation
           },
       queueDepth: controlTransactionQueue.length,
       snapshotSize: dpSnapshot.size
     },
     recording: {
-      active: recordingSession == null
+      active: activeRecording == null
         ? null
-        : recordingSessionSummary(recordingSession),
-      pending: pendingRecordingCommand == null
+        : recordingSessionSummary(activeRecording),
+      pending: pendingRecording == null
         ? null
         : {
-            kind: pendingRecordingCommand.kind,
-            generation: pendingRecordingCommand.generation
+            kind: pendingRecording.kind,
+            generation: pendingRecording.generation
           }
     },
     flash: {
-      active: flashSession == null
+      active: activeFlash == null
         ? null
-        : recordingSessionSummary(flashSession.session),
-      pending: pendingFlashCommand == null
+        : recordingSessionSummary(activeFlash.session),
+      pending: pendingFlash == null
         ? null
         : {
-            kind: pendingFlashCommand.kind,
-            generation: pendingFlashCommand.generation
+            kind: pendingFlash.kind,
+            generation: pendingFlash.generation
           },
       headFileId: flashHeadFileId,
       cachedFileCount: flashFileListSnapshot.length

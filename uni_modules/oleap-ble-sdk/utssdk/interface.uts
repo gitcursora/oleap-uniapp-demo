@@ -22,12 +22,14 @@ export type OleapConnectionState = {
 export type OleapBluetoothState = {
   supported: boolean
   enabled: boolean
+  permissionGranted?: boolean
   mock?: boolean
 }
 
 export type OleapPermissionResult = {
   bluetooth: boolean
   location?: boolean
+  permissionGranted?: boolean
   mock?: boolean
 }
 
@@ -141,4 +143,3 @@ export declare function onDecodeProgress(callback: OleapBleCallback<OleapDecodeP
 export declare function onError(callback: OleapBleCallback<OleapBleError>): OleapBleUnsubscribe
 export declare function getDiagnostics(): any
 export declare function clearDiagnostics(): void
-

@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 
 const root = resolve(new URL('..', import.meta.url).pathname)
 
@@ -59,6 +58,10 @@ function read(path) {
   return readFileSync(resolve(root, path), 'utf8')
 }
 
+function stripAppOnlyBlocks(source) {
+  return source.replace(/\/\/ #ifdef APP[\s\S]*?\/\/ #endif\s*/g, '')
+}
+
 function assertHexFixture(path) {
   const text = read(path).trim()
   if (!text) {
@@ -83,6 +86,12 @@ for (const page of pagesJson.pages) {
   assertFile(`${page.path}.vue`)
 }
 
+const manifest = JSON.parse(read('manifest.json'))
+const mainJs = read('main.js')
+if (mainJs.includes('createSSRApp') && manifest.vueVersion !== '3') {
+  fail('Vue3 entry requires manifest.json vueVersion to be "3"')
+}
+
 const pageFiles = [
   'pages/index/index.vue',
   'pages/device/device.vue',
@@ -99,7 +108,8 @@ for (const file of pageFiles) {
   }
 }
 
-const sdk = await import(pathToFileURL(resolve(root, 'uni_modules/oleap-ble-sdk/index.js')).href)
+const sdkSource = stripAppOnlyBlocks(read('uni_modules/oleap-ble-sdk/index.js'))
+const sdk = await import(`data:text/javascript;base64,${Buffer.from(sdkSource, 'utf8').toString('base64')}`)
 const { OleapBle } = sdk
 
 await OleapBle.init({ mock: true, logLevel: 'debug' })

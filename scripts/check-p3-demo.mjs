@@ -32,8 +32,8 @@ read('docs/phase-3-demo-acceptance-report.md')
 
 for (const text of [
   'loadNativeAdapter',
-  "import('./utssdk/app-android/index.uts')",
-  "import('./utssdk/app-ios/index.uts')",
+  "import * as appNativeAdapter from '@/uni_modules/oleap-ble-sdk'",
+  'getPreloadedNativeAdapter',
   'nativeCall',
   'nativeSubscribe',
   'nativeCallSync',
@@ -69,7 +69,14 @@ for (const text of [
   'setDemoMockMode',
   'initializeSdk',
   'installSubscriptions',
-  'disposeSubscriptions'
+  'disposeSubscriptions',
+  'permissionGranted: false',
+  'bluetoothReady',
+  'refreshBluetoothState',
+  "key: bluetoothOff ? 'refreshBluetooth' : 'permission'",
+  "return this.bluetooth.permissionGranted === true ? '可用' : '待授权'",
+  'const granted = result?.permissionGranted === true || result?.bluetooth === true',
+  'this.bluetooth = await OleapBle.getBluetoothState().catch(() => this.bluetooth)'
 ]) {
   mustContain(indexPage, text, 'home runtime mode controls')
 }

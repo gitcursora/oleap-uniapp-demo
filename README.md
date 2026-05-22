@@ -13,6 +13,12 @@
 - P4 Android 已推进：Flash 文件数量/信息/下载/停止/安全删除、离线 OPUS 落盘和 WAV/MP3 finalize 已接入 UTS 平台层。
 - P5 iOS 已推进：CoreBluetooth host、双通道 notify/write、控制协议 smoke、实时录音 start/stop、OPUS notify 帧切分、`.opusraw`/`.oleapframes` 落盘和 WAV/MP3 decoder 已接入 UTS 平台层；iOS Flash 下载在后续 P5 切片实现。
 
+首页用法：
+
+1. 默认使用 Mock 模式，可直接点击 `扫描`、`连接首台`，再进入 `实时录音` 或 `Flash 文件`。
+2. 连接真实耳机时切到 Native 模式，按首页 `下一步` 区域依次完成授权、扫描、连接。
+3. 连接成功后，首页工作区会解锁设备状态、实时录音和 Flash 文件入口。
+
 检查：
 
 ```sh

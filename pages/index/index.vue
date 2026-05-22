@@ -1,55 +1,122 @@
 <template>
-  <view class="page">
-    <view class="panel">
-      <view class="title">Oleap BLE</view>
-      <view class="row">
-        <text>模式</text>
-        <text class="value">{{ mock ? 'Mock' : 'Native' }}</text>
+  <view class="home-page">
+    <view class="hero">
+      <view>
+        <view class="eyebrow">Oleap BLE SDK</view>
+        <view class="hero-title">课堂开发控制台</view>
+        <view class="hero-subtitle">{{ heroSubtitle }}</view>
       </view>
-      <view class="button-row mode-row">
-        <button :class="mock ? 'primary-button' : 'secondary-button'" @click="setRuntimeMode(true)">Mock</button>
-        <button :class="!mock ? 'primary-button' : 'secondary-button'" @click="setRuntimeMode(false)">Native</button>
+      <view :class="connected ? 'status-pill online' : 'status-pill'">
+        {{ connected ? '已连接' : '待连接' }}
       </view>
-      <view class="row">
-        <text>蓝牙</text>
-        <text class="value">{{ bluetooth.enabled ? '可用' : '不可用' }}</text>
+    </view>
+
+    <view class="mode-card">
+      <view class="mode-copy">
+        <view class="section-title">运行模式</view>
+        <view class="muted">{{ mock ? '无需耳机即可体验完整流程' : '使用真机蓝牙连接 Oleap 耳机' }}</view>
       </view>
-      <view class="row">
-        <text>连接</text>
-        <text class="value">{{ connected ? connectedDevice.name : '未连接' }}</text>
+      <view class="segmented">
+        <button :class="mock ? 'segment active' : 'segment'" :disabled="busy" @click="setRuntimeMode(true)">Mock</button>
+        <button :class="!mock ? 'segment active' : 'segment'" :disabled="busy" @click="setRuntimeMode(false)">Native</button>
       </view>
-      <view class="button-row">
-        <button class="secondary-button" @click="requestPermissions">权限</button>
-        <button class="primary-button" @click="scan">扫描</button>
-        <button class="secondary-button" @click="disconnectDevice">断开</button>
+    </view>
+
+    <view class="summary-grid">
+      <view class="summary-cell">
+        <text class="summary-label">蓝牙</text>
+        <text class="summary-value">{{ bluetoothLabel }}</text>
       </view>
-      <view v-if="error" class="muted">{{ error }}</view>
+      <view class="summary-cell">
+        <text class="summary-label">设备</text>
+        <text class="summary-value">{{ deviceCountLabel }}</text>
+      </view>
+      <view class="summary-cell wide">
+        <text class="summary-label">连接</text>
+        <text class="summary-value">{{ connectionLabel }}</text>
+      </view>
+    </view>
+
+    <view class="action-panel">
+      <view class="action-copy">
+        <view class="section-title">下一步</view>
+        <view class="action-title">{{ primaryAction.title }}</view>
+        <view class="muted">{{ primaryAction.description }}</view>
+      </view>
+      <view class="button-row compact-actions">
+        <button
+          v-for="action in primaryAction.actions"
+          :key="action.key"
+          :class="action.primary ? 'primary-button' : 'secondary-button'"
+          :disabled="busy || action.disabled"
+          @click="runPrimaryAction(action.key)"
+        >
+          {{ action.label }}
+        </button>
+      </view>
+      <view v-if="error" class="error-box">{{ error }}</view>
+    </view>
+
+    <view class="panel workflow-panel">
+      <view class="section-title">流程</view>
+      <view class="flow">
+        <view v-for="item in flowItems" :key="item.key" :class="item.done ? 'flow-item done' : 'flow-item'">
+          <view class="flow-index">{{ item.index }}</view>
+          <view>
+            <view class="flow-title">{{ item.title }}</view>
+            <view class="flow-note">{{ item.note }}</view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view class="workspace-grid">
+      <view
+        v-for="entry in workspaceEntries"
+        :key="entry.path"
+        :class="entry.disabled ? 'workspace-card disabled' : 'workspace-card'"
+        @click="openWorkspace(entry)"
+      >
+        <view class="workspace-top">
+          <text class="workspace-title">{{ entry.title }}</text>
+          <text class="workspace-tag">{{ entry.tag }}</text>
+        </view>
+        <view class="workspace-desc">{{ entry.description }}</view>
+      </view>
     </view>
 
     <view class="panel">
-      <view class="section-title">设备</view>
-      <view v-if="devices.length === 0" class="muted">暂无扫描结果</view>
+      <view class="device-header">
+        <view>
+          <view class="section-title">扫描结果</view>
+          <view class="muted">{{ scanning ? '扫描中' : scanSummary }}</view>
+        </view>
+        <button class="secondary-button small-button" :disabled="busy" @click="scan">刷新</button>
+      </view>
+      <view v-if="devices.length === 0" class="empty-state">暂无设备</view>
       <view
         v-for="device in devices"
         :key="device.deviceId"
-        class="list-item"
+        class="device-item"
         @click="connectDevice(device)"
       >
-        <view class="row">
-          <text>{{ device.name }}</text>
-          <text class="value">{{ device.rssi }} dBm</text>
+        <view>
+          <view class="device-name">{{ device.name || 'Oleap 设备' }}</view>
+          <view class="code">{{ device.deviceId }}</view>
         </view>
-        <view class="code">{{ device.deviceId }}</view>
+        <view class="device-side">
+          <text class="rssi">{{ device.rssi || '-' }} dBm</text>
+          <text class="connect-text">{{ connectedDevice && connectedDevice.deviceId === device.deviceId ? '当前' : '连接' }}</text>
+        </view>
       </view>
     </view>
 
     <view class="panel">
-      <view class="section-title">工作区</view>
-      <view class="button-row">
-        <button class="secondary-button" @click="go('/pages/device/device')">设备</button>
-        <button class="secondary-button" @click="go('/pages/record/record')">录音</button>
-        <button class="secondary-button" @click="go('/pages/flash/flash')">Flash</button>
-        <button class="secondary-button" @click="go('/pages/transcript/transcript')">转写</button>
+      <view class="section-title">最近事件</view>
+      <view v-if="events.length === 0" class="empty-state">暂无事件</view>
+      <view v-for="event in events" :key="event.id" class="event-row">
+        <text class="event-time">{{ event.time }}</text>
+        <text class="event-text">{{ event.text }}</text>
       </view>
     </view>
   </view>
@@ -65,13 +132,159 @@ export default {
       mock: true,
       bluetooth: {
         supported: false,
-        enabled: false
+        enabled: false,
+        permissionGranted: false
       },
       devices: [],
       connected: false,
       connectedDevice: null,
+      busy: false,
+      scanning: false,
+      scanTimer: null,
       error: '',
-      disposers: []
+      disposers: [],
+      events: []
+    }
+  },
+  computed: {
+    heroSubtitle() {
+      if (this.connected) {
+        return this.connectedDevice?.name || this.connectedDevice?.deviceId || 'Oleap 设备已就绪'
+      }
+      return this.mock ? 'Mock 模式可直接演示扫描、连接、录音和 Flash 流程' : 'Native 模式需要先授权并扫描附近耳机'
+    },
+    bluetoothReady() {
+      return this.mock || (this.bluetooth.enabled && this.bluetooth.permissionGranted === true)
+    },
+    bluetoothLabel() {
+      if (this.mock) {
+        return '可用'
+      }
+      if (!this.bluetooth.supported) {
+        return '不支持'
+      }
+      if (!this.bluetooth.enabled) {
+        return '未开启'
+      }
+      return this.bluetooth.permissionGranted === true ? '可用' : '待授权'
+    },
+    connectionLabel() {
+      if (!this.connected) {
+        return '未连接'
+      }
+      return this.connectedDevice?.name || this.connectedDevice?.deviceId || '已连接'
+    },
+    deviceCountLabel() {
+      return this.devices.length === 0 ? '无结果' : `${this.devices.length} 台`
+    },
+    scanSummary() {
+      return this.devices.length === 0 ? '点击刷新开始扫描' : `发现 ${this.devices.length} 台设备`
+    },
+    flowItems() {
+      return [
+        {
+          key: 'mode',
+          index: '1',
+          title: '选择模式',
+          note: this.mock ? 'Mock' : 'Native',
+          done: true
+        },
+        {
+          key: 'permission',
+          index: '2',
+          title: '蓝牙准备',
+          note: this.bluetoothLabel,
+          done: this.bluetoothReady
+        },
+        {
+          key: 'scan',
+          index: '3',
+          title: '发现设备',
+          note: this.deviceCountLabel,
+          done: this.devices.length > 0
+        },
+        {
+          key: 'connect',
+          index: '4',
+          title: '连接耳机',
+          note: this.connected ? '已就绪' : '未连接',
+          done: this.connected
+        }
+      ]
+    },
+    primaryAction() {
+      if (!this.bluetoothReady) {
+        const bluetoothOff = !this.bluetooth.enabled
+        return {
+          title: bluetoothOff ? '打开系统蓝牙' : '打开蓝牙权限',
+          description: bluetoothOff ? '请先开启手机蓝牙，再回到页面刷新状态。' : 'Native 模式先完成系统授权，再开始扫描设备。',
+          actions: [
+            { key: bluetoothOff ? 'refreshBluetooth' : 'permission', label: bluetoothOff ? '刷新状态' : '授权', primary: true },
+            { key: 'mock', label: '改用 Mock', primary: false }
+          ]
+        }
+      }
+      if (this.devices.length === 0) {
+        return {
+          title: '扫描附近设备',
+          description: this.mock ? 'Mock 会生成两台示例设备。' : '请保持耳机开机并靠近手机。',
+          actions: [
+            { key: 'scan', label: this.scanning ? '扫描中' : '扫描', primary: true, disabled: this.scanning }
+          ]
+        }
+      }
+      if (!this.connected) {
+        return {
+          title: '连接一台设备',
+          description: '连接成功后可进入设备状态、实时录音和 Flash 文件页面。',
+          actions: [
+            { key: 'connectFirst', label: '连接首台', primary: true },
+            { key: 'scan', label: '重新扫描', primary: false }
+          ]
+        }
+      }
+      return {
+        title: '开始业务验证',
+        description: '先看设备状态，再进入实时录音或 Flash 下载。',
+        actions: [
+          { key: 'record', label: '实时录音', primary: true },
+          { key: 'device', label: '设备状态', primary: false },
+          { key: 'disconnect', label: '断开', primary: false }
+        ]
+      }
+    },
+    workspaceEntries() {
+      const locked = !this.connected
+      return [
+        {
+          title: '设备状态',
+          tag: 'DP',
+          description: '电量、SN、版本、EQ、主动上报',
+          path: '/pages/device/device',
+          disabled: locked
+        },
+        {
+          title: '实时录音',
+          tag: 'WAV',
+          description: '启动录音、结束解码、复制文件路径',
+          path: '/pages/record/record',
+          disabled: locked
+        },
+        {
+          title: 'Flash 文件',
+          tag: 'OFFLINE',
+          description: '读取文件列表、下载并生成音频',
+          path: '/pages/flash/flash',
+          disabled: locked
+        },
+        {
+          title: '转写测试',
+          tag: 'APP',
+          description: '选择录音文件后进入文本结果页',
+          path: '/pages/transcript/transcript',
+          disabled: false
+        }
+      ]
     }
   },
   async onLoad() {
@@ -80,6 +293,7 @@ export default {
   },
   onUnload() {
     this.disposeSubscriptions()
+    this.clearScanTimer()
   },
   methods: {
     async initializeSdk() {
@@ -88,6 +302,7 @@ export default {
         this.bluetooth = await OleapBle.getBluetoothState()
         this.applyConnectionState()
         this.installSubscriptions()
+        this.addEvent(`已进入 ${this.mock ? 'Mock' : 'Native'} 模式`)
       })
     },
     installSubscriptions() {
@@ -96,17 +311,28 @@ export default {
         OleapBle.onDeviceFound((device) => {
           if (!this.devices.some((item) => item.deviceId === device.deviceId)) {
             this.devices.push(device)
+            this.addEvent(`发现 ${device.name || device.deviceId}`)
           }
         }),
         OleapBle.onConnectionChanged((event) => {
           this.connected = event.connected
           this.connectedDevice = event.device || null
+          this.addEvent(event.connected ? '设备已连接' : '设备已断开')
+        }),
+        OleapBle.onDpReport((event) => {
+          this.addEvent(`DP 上报 ${event.name || event.dpId}`)
         })
       )
     },
     disposeSubscriptions() {
       this.disposers.forEach((dispose) => dispose())
       this.disposers = []
+    },
+    clearScanTimer() {
+      if (this.scanTimer) {
+        clearTimeout(this.scanTimer)
+        this.scanTimer = null
+      }
     },
     applyConnectionState() {
       const connection = OleapBle.getConnectionState()
@@ -116,9 +342,10 @@ export default {
     async setRuntimeMode(mock) {
       const previousMock = this.mock
       const nextMock = Boolean(mock)
-      if (previousMock === nextMock) {
+      if (previousMock === nextMock || this.busy) {
         return
       }
+      this.busy = true
       this.disposeSubscriptions()
       this.devices = []
       this.connected = false
@@ -126,7 +353,7 @@ export default {
       try {
         await OleapBle.disconnect()
       } catch (error) {
-        // Native mode may not be initialized yet; switching mode should stay recoverable.
+        // Switching mode should stay recoverable even if the old adapter was not initialized.
       }
       try {
         this.error = ''
@@ -136,6 +363,7 @@ export default {
         this.bluetooth = await OleapBle.getBluetoothState()
         this.applyConnectionState()
         this.installSubscriptions()
+        this.addEvent(`切换到 ${nextMock ? 'Mock' : 'Native'} 模式`)
       } catch (error) {
         this.error = formatSdkError(error)
         this.mock = previousMock
@@ -143,22 +371,48 @@ export default {
         await OleapBle.init({ mock: previousMock, logLevel: 'debug' }).catch(() => {})
         this.bluetooth = await OleapBle.getBluetoothState().catch(() => ({
           supported: false,
-          enabled: false
+          enabled: false,
+          permissionGranted: false
         }))
         this.applyConnectionState()
         this.installSubscriptions()
+      } finally {
+        this.busy = false
       }
     },
     async requestPermissions() {
       await this.safeRun(async () => {
-        await OleapBle.requestPermissions()
+        const result = await OleapBle.requestPermissions()
         this.bluetooth = await OleapBle.getBluetoothState()
+        const granted = result?.permissionGranted === true || result?.bluetooth === true
+        this.addEvent(granted ? '蓝牙权限已授予' : '蓝牙权限未授予')
+      })
+    },
+    async refreshBluetoothState() {
+      await this.safeRun(async () => {
+        this.bluetooth = await OleapBle.getBluetoothState()
+        this.addEvent(`蓝牙状态：${this.bluetoothLabel}`)
       })
     },
     async scan() {
       await this.safeRun(async () => {
         this.devices = []
-        await OleapBle.startScan({ timeoutMs: 2500 })
+        this.clearScanTimer()
+        this.scanning = true
+        try {
+          await OleapBle.startScan({ timeoutMs: 3000 })
+          this.bluetooth = await OleapBle.getBluetoothState().catch(() => this.bluetooth)
+          this.addEvent('开始扫描')
+        } catch (error) {
+          this.scanning = false
+          this.bluetooth = await OleapBle.getBluetoothState().catch(() => this.bluetooth)
+          throw error
+        }
+        this.scanTimer = setTimeout(() => {
+          this.scanning = false
+          this.scanTimer = null
+          this.addEvent(`扫描结束，发现 ${this.devices.length} 台`)
+        }, 3200)
       })
     },
     async connectDevice(device) {
@@ -171,15 +425,73 @@ export default {
         await OleapBle.disconnect()
       })
     },
+    async runPrimaryAction(key) {
+      if (key === 'permission') {
+        await this.requestPermissions()
+        return
+      }
+      if (key === 'refreshBluetooth') {
+        await this.refreshBluetoothState()
+        return
+      }
+      if (key === 'mock') {
+        await this.setRuntimeMode(true)
+        return
+      }
+      if (key === 'scan') {
+        await this.scan()
+        return
+      }
+      if (key === 'connectFirst') {
+        if (this.devices[0]) {
+          await this.connectDevice(this.devices[0])
+        }
+        return
+      }
+      if (key === 'record') {
+        this.go('/pages/record/record')
+        return
+      }
+      if (key === 'device') {
+        this.go('/pages/device/device')
+        return
+      }
+      if (key === 'disconnect') {
+        await this.disconnectDevice()
+      }
+    },
+    openWorkspace(entry) {
+      if (entry.disabled) {
+        this.error = '请先连接设备'
+        return
+      }
+      this.go(entry.path)
+    },
     go(url) {
       uni.navigateTo({ url })
     },
+    addEvent(text) {
+      const now = new Date()
+      const time = `${`${now.getHours()}`.padStart(2, '0')}:${`${now.getMinutes()}`.padStart(2, '0')}:${`${now.getSeconds()}`.padStart(2, '0')}`
+      this.events.unshift({
+        id: `${Date.now()}-${Math.random()}`,
+        time,
+        text
+      })
+      this.events = this.events.slice(0, 8)
+    },
     async safeRun(action) {
+      if (this.busy) {
+        return
+      }
       try {
+        this.busy = true
         this.error = ''
         await action()
       } catch (error) {
         this.error = formatSdkError(error) || '操作失败'
+      } finally {
+        this.busy = false
       }
     }
   }
@@ -187,7 +499,350 @@ export default {
 </script>
 
 <style scoped>
-.mode-row {
-  margin-bottom: 12rpx;
+.home-page {
+  min-height: 100vh;
+  padding: 24rpx;
+  box-sizing: border-box;
+  background: #f5f7fb;
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 20rpx;
+  padding: 28rpx 4rpx 24rpx;
+}
+
+.eyebrow {
+  color: #116dff;
+  font-size: 22rpx;
+  font-weight: 700;
+}
+
+.hero-title {
+  margin-top: 8rpx;
+  color: #111827;
+  font-size: 44rpx;
+  font-weight: 800;
+}
+
+.hero-subtitle {
+  margin-top: 12rpx;
+  max-width: 560rpx;
+  color: #526070;
+  font-size: 24rpx;
+  line-height: 1.5;
+}
+
+.status-pill {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  padding: 10rpx 18rpx;
+  border-radius: 999px;
+  color: #475569;
+  background: #e8edf4;
+  font-size: 22rpx;
+}
+
+.status-pill.online {
+  color: #0f766e;
+  background: #d9f4ee;
+}
+
+.mode-card,
+.action-panel,
+.panel {
+  background: #ffffff;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+  padding: 24rpx;
+  margin-bottom: 20rpx;
+}
+
+.mode-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20rpx;
+}
+
+.mode-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.segmented {
+  display: flex;
+  padding: 6rpx;
+  border-radius: 8px;
+  background: #eef2f7;
+}
+
+.segment {
+  min-width: 120rpx;
+  height: 62rpx;
+  line-height: 62rpx;
+  margin: 0;
+  border-radius: 6px;
+  color: #334155;
+  background: transparent;
+  font-size: 24rpx;
+}
+
+.segment.active {
+  color: #ffffff;
+  background: #116dff;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16rpx;
+  margin-bottom: 20rpx;
+}
+
+.summary-cell {
+  min-height: 116rpx;
+  padding: 22rpx;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+  background: #ffffff;
+  box-sizing: border-box;
+}
+
+.summary-cell.wide {
+  grid-column: span 2;
+}
+
+.summary-label {
+  display: block;
+  color: #64748b;
+  font-size: 22rpx;
+}
+
+.summary-value {
+  display: block;
+  margin-top: 10rpx;
+  color: #0f172a;
+  font-size: 30rpx;
+  font-weight: 700;
+  word-break: break-all;
+}
+
+.action-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18rpx;
+}
+
+.action-title {
+  margin-top: 8rpx;
+  color: #111827;
+  font-size: 34rpx;
+  font-weight: 800;
+}
+
+.compact-actions {
+  margin-top: 2rpx;
+}
+
+.error-box {
+  padding: 18rpx;
+  border-radius: 8px;
+  color: #b42318;
+  background: #fff1f0;
+  font-size: 24rpx;
+  line-height: 1.5;
+}
+
+.workflow-panel {
+  padding-bottom: 10rpx;
+}
+
+.flow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14rpx;
+}
+
+.flow-item {
+  display: flex;
+  gap: 14rpx;
+  min-height: 96rpx;
+  padding: 18rpx;
+  border-radius: 8px;
+  background: #f7f9fc;
+  box-sizing: border-box;
+}
+
+.flow-item.done {
+  background: #edf7f4;
+}
+
+.flow-index {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 44rpx;
+  width: 44rpx;
+  height: 44rpx;
+  border-radius: 50%;
+  color: #ffffff;
+  background: #64748b;
+  font-size: 22rpx;
+  font-weight: 700;
+}
+
+.flow-item.done .flow-index {
+  background: #0f766e;
+}
+
+.flow-title {
+  color: #172033;
+  font-size: 24rpx;
+  font-weight: 700;
+}
+
+.flow-note {
+  margin-top: 6rpx;
+  color: #64748b;
+  font-size: 22rpx;
+}
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16rpx;
+  margin-bottom: 20rpx;
+}
+
+.workspace-card {
+  min-height: 172rpx;
+  padding: 22rpx;
+  border-radius: 8px;
+  border: 1px solid #dbe4ee;
+  background: #ffffff;
+  box-sizing: border-box;
+}
+
+.workspace-card.disabled {
+  opacity: 0.52;
+}
+
+.workspace-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12rpx;
+}
+
+.workspace-title {
+  color: #111827;
+  font-size: 28rpx;
+  font-weight: 800;
+}
+
+.workspace-tag {
+  flex: 0 0 auto;
+  padding: 4rpx 10rpx;
+  border-radius: 6px;
+  color: #116dff;
+  background: #eaf2ff;
+  font-size: 18rpx;
+  font-weight: 700;
+}
+
+.workspace-desc {
+  margin-top: 18rpx;
+  color: #526070;
+  font-size: 22rpx;
+  line-height: 1.45;
+}
+
+.device-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  margin-bottom: 14rpx;
+}
+
+.small-button {
+  min-width: 120rpx;
+  height: 62rpx;
+  line-height: 62rpx;
+  font-size: 24rpx;
+}
+
+.empty-state {
+  padding: 28rpx 0;
+  color: #94a3b8;
+  font-size: 24rpx;
+  text-align: center;
+}
+
+.device-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  padding: 20rpx 0;
+  border-top: 1px solid #eef2f6;
+}
+
+.device-name {
+  color: #111827;
+  font-size: 28rpx;
+  font-weight: 700;
+}
+
+.device-side {
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+.rssi {
+  display: block;
+  color: #64748b;
+  font-size: 22rpx;
+}
+
+.connect-text {
+  display: block;
+  margin-top: 8rpx;
+  color: #116dff;
+  font-size: 24rpx;
+  font-weight: 700;
+}
+
+.event-row {
+  display: flex;
+  gap: 16rpx;
+  padding: 14rpx 0;
+  border-top: 1px solid #eef2f6;
+}
+
+.event-time {
+  flex: 0 0 92rpx;
+  color: #94a3b8;
+  font-size: 22rpx;
+}
+
+.event-text {
+  flex: 1;
+  color: #334155;
+  font-size: 24rpx;
+  line-height: 1.45;
+}
+
+@media screen and (max-width: 360px) {
+  .mode-card,
+  .hero {
+    flex-direction: column;
+  }
+
+  .workspace-grid,
+  .flow {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

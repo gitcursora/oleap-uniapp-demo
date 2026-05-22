@@ -83,7 +83,8 @@ mustContain(androidIndex, 'const crcOffset = 4 + declaredLength', 'Flash respons
 mustContain(androidIndex, 'returnLength < dataCapacity', 'Flash completion condition uses actual chunk capacity')
 mustContain(androidIndex, 'returnLength == FLASH_READ_ERROR_VALUE', 'Flash read-error sentinel handling')
 mustContain(androidIndex, 'returnLength == FLASH_NO_FILE_VALUE', 'Flash missing-file sentinel handling')
-mustContain(androidIndex, 'Number(countResponse.fileStartId) != fileId', 'safe delete verifies head file')
+mustContain(androidIndex, 'countResponse.fileStartId != fileId', 'safe delete verifies head file')
+mustNotContain(androidIndex, 'Number(countResponse.fileStartId)', 'Kotlin-unsafe Number constructor in safe delete')
 
 for (const text of [
   'formatOptions',

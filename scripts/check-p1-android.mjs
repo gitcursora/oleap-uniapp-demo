@@ -6,6 +6,10 @@ const androidIndex = readFileSync(
   resolve(root, 'uni_modules/oleap-ble-sdk/utssdk/app-android/index.uts'),
   'utf8'
 )
+const sdkFacade = readFileSync(
+  resolve(root, 'uni_modules/oleap-ble-sdk/index.js'),
+  'utf8'
+)
 const manifest = readFileSync(
   resolve(root, 'uni_modules/oleap-ble-sdk/utssdk/app-android/AndroidManifest.xml'),
   'utf8'
@@ -30,6 +34,12 @@ function fail(message) {
 function mustContain(source, pattern, label) {
   if (!source.includes(pattern)) {
     fail(`Missing ${label}: ${pattern}`)
+  }
+}
+
+function mustNotContain(source, pattern, label) {
+  if (source.includes(pattern)) {
+    fail(`Unexpected ${label}: ${pattern}`)
   }
 }
 
@@ -58,6 +68,12 @@ for (const importPath of requiredAndroidImports) {
   mustContain(androidIndex, importPath, 'Android native import')
 }
 
+mustContain(sdkFacade, '// #ifdef APP', 'app UTS adapter condition')
+mustContain(sdkFacade, "import * as appNativeAdapter from '@/uni_modules/oleap-ble-sdk'", 'static UTS plugin root import')
+mustContain(sdkFacade, 'getPreloadedNativeAdapter', 'preloaded UTS adapter resolver')
+mustContain(sdkFacade, 'bluetooth.permissionGranted !== true', 'native scan permission guard')
+mustNotContain(sdkFacade, "import('@/uni_modules/oleap-ble-sdk')", 'dynamic UTS import that triggers App iife code splitting')
+
 const requiredPermissionStrings = [
   'android.permission.BLUETOOTH_SCAN',
   'android.permission.BLUETOOTH_CONNECT',
@@ -68,9 +84,12 @@ for (const permission of requiredPermissionStrings) {
   mustContain(androidIndex, permission, 'runtime permission handling')
   mustContain(manifest, permission, 'manifest permission')
 }
+mustContain(manifest, 'android:usesPermissionFlags="neverForLocation"', 'Bluetooth scan neverForLocation manifest flag')
+mustContain(manifest, 'android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30"', 'pre-Android 12 location permission scope')
 
 mustContain(androidIndex, 'UTSAndroid.requestSystemPermission', 'permission request')
 mustContain(androidIndex, 'UTSAndroid.checkSystemPermissionGranted', 'permission check')
+mustContain(androidIndex, 'permissionGranted: hasRequiredPermissions()', 'bluetooth state permission flag')
 mustContain(androidIndex, 'getBluetoothState', 'bluetooth state API')
 mustContain(androidIndex, 'startScan', 'start scan API')
 mustContain(androidIndex, 'stopScanInternal', 'scan cleanup helper')

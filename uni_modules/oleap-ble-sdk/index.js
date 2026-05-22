@@ -1,3 +1,7 @@
+// #ifdef APP
+import * as appNativeAdapter from '@/uni_modules/oleap-ble-sdk'
+// #endif
+
 const SDK_VERSION = '0.1.0-phase0'
 const FRAME_TIME_MS = 20
 const SAMPLE_RATE = 16000
@@ -26,7 +30,6 @@ const state = {
 }
 
 let nativeAdapter = null
-let nativeAdapterLoadPromise = null
 
 const mockDevices = [
   {
@@ -86,49 +89,42 @@ function normalizeNativeAdapter(module) {
   return module?.OleapBle || module?.default || module
 }
 
+function getPreloadedNativeAdapter() {
+  let module = null
+  // #ifdef APP
+  module = appNativeAdapter
+  // #endif
+  return normalizeNativeAdapter(module)
+}
+
 async function loadNativeAdapter() {
   if (nativeAdapter) {
     return nativeAdapter
   }
-  if (nativeAdapterLoadPromise) {
-    return nativeAdapterLoadPromise
+
+  let adapter = null
+  try {
+    adapter = getPreloadedNativeAdapter()
+  } catch (error) {
+    throw makeError(
+      'native_adapter_load_failed',
+      '无法加载 native UTS adapter，请确认在 HBuilderX App 运行环境中编译',
+      'sdk',
+      false,
+      { error: error?.message || `${error}` }
+    )
   }
 
-  nativeAdapterLoadPromise = (async () => {
-    let module = null
-    try {
-      // #ifdef APP-ANDROID
-      module = await import('./utssdk/app-android/index.uts')
-      // #endif
-      // #ifdef APP-IOS
-      module = await import('./utssdk/app-ios/index.uts')
-      // #endif
-    } catch (error) {
-      throw makeError(
-        'native_adapter_load_failed',
-        '无法加载 native UTS adapter，请确认在 HBuilderX App 运行环境中编译',
-        'sdk',
-        false,
-        { error: error?.message || `${error}` }
-      )
-    }
-
-    const adapter = normalizeNativeAdapter(module)
-    if (!adapter || typeof adapter.init !== 'function') {
-      throw makeError(
-        'native_adapter_missing',
-        '当前运行环境未提供 oleap-ble-sdk native adapter',
-        'sdk',
-        false
-      )
-    }
-    nativeAdapter = adapter
-    return adapter
-  })().finally(() => {
-    nativeAdapterLoadPromise = null
-  })
-
-  return nativeAdapterLoadPromise
+  if (!adapter || typeof adapter.init !== 'function') {
+    throw makeError(
+      'native_adapter_missing',
+      '当前运行环境未提供 oleap-ble-sdk native adapter',
+      'sdk',
+      false
+    )
+  }
+  nativeAdapter = adapter
+  return adapter
 }
 
 function useNativeMode() {
@@ -268,11 +264,13 @@ export const OleapBle = {
     ensureInitialized()
     pushDiagnostic('permission_result', {
       bluetooth: true,
+      permissionGranted: true,
       mock: state.mock
     })
     return {
       bluetooth: true,
       location: true,
+      permissionGranted: true,
       mock: state.mock
     }
   },
@@ -285,12 +283,17 @@ export const OleapBle = {
     return {
       supported: true,
       enabled: true,
+      permissionGranted: true,
       mock: state.mock
     }
   },
 
   async startScan(options = {}) {
     if (useNativeMode()) {
+      const bluetooth = await this.getBluetoothState().catch(() => null)
+      if (bluetooth == null || bluetooth.permissionGranted !== true) {
+        await this.requestPermissions()
+      }
       return nativeCall('startScan', [options])
     }
     ensureInitialized()
