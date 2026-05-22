@@ -9,7 +9,8 @@
     "check:p1-android": "node scripts/check-p1-android.mjs",
     "check:p2-control": "node scripts/check-p2-control.mjs",
     "check:p3-recording": "node scripts/check-p3-recording.mjs",
-    "check:p3-demo": "node scripts/check-p3-demo.mjs"
+    "check:p3-demo": "node scripts/check-p3-demo.mjs",
+    "check:p4-flash": "node scripts/check-p4-flash.mjs"
   },
   "engines": {
     "node": ">=18"

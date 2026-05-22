@@ -56,7 +56,7 @@ if (statSync(decoderAarPath).size < 1024 * 1024) {
 }
 
 const requiredRecordingStrings = [
-  '0.1.0-p3-decode',
+  '0.1.0-p4-flash',
   'RECORDING_COMMAND_STOP',
   'RECORDING_COMMAND_MEETING',
   'RECORDING_RESPONSE_START',

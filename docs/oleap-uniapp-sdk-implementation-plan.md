@@ -1,6 +1,6 @@
 # Oleap UniApp BLE SDK Implementation Plan
 
-状态：v0.2，已完成两轮可落地性审查  
+状态：v0.3，Android P0-P4 已推进到静态与 fixture 可验收
 目标项目：`oleap-uniapp-demo`  
 目标 SDK：`uni_modules/oleap-ble-sdk`  
 目标形态：普通 `uni-app` 教学 Demo + UTS 插件标准 SDK，预留 `uni-app x` 兼容

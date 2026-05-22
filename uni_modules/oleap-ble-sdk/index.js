@@ -635,7 +635,7 @@ export const OleapBle = {
     state.flashDownloading = false
     const durationMs = Math.max(1000, Math.floor(file.fileLength / 40) * FRAME_TIME_MS)
     const result = {
-      filePath: `mock://recordings/flash-${file.fileId}.wav`,
+      filePath: `mock://recordings/flash-${file.fileId}.${format}`,
       format,
       durationMs,
       sampleRate: file.sampleRate,

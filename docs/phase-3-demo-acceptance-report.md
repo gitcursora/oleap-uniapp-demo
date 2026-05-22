@@ -32,5 +32,5 @@ npm run check:p3-demo
 
 - `manifest.json` 由 HBuilderX 生成，本轮不修改、不纳入提交。
 - Android native BLE/录音/解码已有静态与 fixture 验收，仍需真机验证 UTS 编译、权限弹窗、连接稳定性和 WAV/MP3 可播放性。
-- Flash native 协议仍按实施计划放在 P4；当前 demo 保留 mock 链路。
+- Flash native 协议已在 P4 接入 Android，仍需真机验证。
 - iOS native BLE 当前仍是 unsupported stub。

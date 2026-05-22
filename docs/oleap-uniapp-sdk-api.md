@@ -1,6 +1,6 @@
 # Oleap UniApp BLE SDK API
 
-状态：Phase 0 API 契约稳定；Android UTS 已接入扫描、连接、notify/write transport、控制协议、实时录音 OPUS 落盘和 WAV/MP3 finalize。Flash 与 iOS 原生实现待后续 Phase 接入。
+状态：Phase 0 API 契约稳定；Android UTS 已接入扫描、连接、notify/write transport、控制协议、实时录音 OPUS 落盘、Flash 离线文件下载和 WAV/MP3 finalize。iOS 原生实现待后续 Phase 接入。
 
 ## 导入
 
@@ -96,7 +96,27 @@ const result = await OleapBle.downloadFlashRecording({
 await OleapBle.stopFlashDownload()
 ```
 
-`deleteAfterSuccess` 后续只允许安全删除队首文件。
+Android native 当前已能查询文件数量、读取文件信息、连续下载 OPUS chunk、停止传输、输出 WAV/MP3，并可在 `deleteAfterSuccess=true` 时安全删除队首文件。SDK 会先确认目标 `fileId` 是设备当前队首；非队首删除返回 `flash_delete_order_violation`。
+
+返回：
+
+```js
+{
+  filePath: '/cache/oleap-recordings/android-xxx.wav',
+  format: 'wav',
+  source: 'flash',
+  fileId: 1001,
+  durationMs: 2000,
+  sampleRate: 16000,
+  channels: 1,
+  frameCount: 100,
+  lostFrames: 0,
+  outOfOrderFrames: 0,
+  badFrames: 0,
+  size: 64044,
+  deleted: false
+}
+```
 
 ## 事件
 

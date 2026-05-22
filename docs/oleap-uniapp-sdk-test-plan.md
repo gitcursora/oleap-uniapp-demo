@@ -152,3 +152,30 @@ Flash：
 - 下载后 WAV 可播放。
 - 队首安全删除。
 - 非队首删除拒绝。
+
+当前静态与 fixture 验收：
+
+```sh
+npm run check:p4-flash
+```
+
+覆盖：
+
+- Android Flash 协议占位已移除。
+- Flash 文件数量、文件信息、文件下载、删除、停止传输命令 codec 存在。
+- Flash 命令 CRC 从参数长度字段开始计算。
+- Flash 响应 CRC offset 使用 `4 + declaredLength` 动态计算。
+- 文件信息 fixture 可解析出 fileId、长度、录音类型、通道、采样率和码率。
+- 下载 chunk fixture 可解析出动态 payload，并复用 OPUS 帧切分。
+- 下载完成条件使用 `returnLength < dataCapacity`。
+- `0xFEFEFEFE` 读取错误和 `0xFFFFFFFF` 文件不存在特殊值被处理。
+- `deleteAfterSuccess` 只允许删除设备当前队首文件。
+- Demo Flash 页支持 WAV/MP3、下载后删除队首、停止下载、复制路径和转写入口。
+
+待真机补齐：
+
+- Android HBuilderX/UTS Flash 编译验证。
+- 大文件连续下载稳定性。
+- 手动停止下载后设备侧传输停止。
+- 下载后 WAV/MP3 可播放。
+- 队首删除成功、非队首删除拒绝。

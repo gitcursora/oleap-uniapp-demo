@@ -10,7 +10,8 @@
 - P3 Android 已推进：实时录音 start/stop、响应解析、OPUS notify 帧切分、丢包统计、`.opusraw`/`.oleapframes` 落盘、WAV/MP3 finalize 和录音进度已接入 UTS 平台层。
 - Demo 页面已支持 Mock/Native 运行模式切换，默认使用 mock mode，可在没有耳机的情况下跑通页面和 API 调用链。
 - 录音页已补齐场景选择、WAV/MP3 输出选择、录音统计、解码进度、文件路径复制和转写入口。
-- Flash 文件协议和 iOS 原生 BLE 在后续 Phase 实现。
+- P4 Android 已推进：Flash 文件数量/信息/下载/停止/安全删除、离线 OPUS 落盘和 WAV/MP3 finalize 已接入 UTS 平台层。
+- iOS 原生 BLE 在后续 Phase 实现。
 
 检查：
 
@@ -20,6 +21,7 @@ npm run check:p1-android
 npm run check:p2-control
 npm run check:p3-recording
 npm run check:p3-demo
+npm run check:p4-flash
 ```
 
 入口：

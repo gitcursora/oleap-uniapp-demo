@@ -26,7 +26,7 @@ type NativeDpCallback = (event: any) => void
 type NativeProgressCallback = (event: any) => void
 type NativeErrorCallback = (event: any) => void
 
-const SDK_VERSION = '0.1.0-p3-decode'
+const SDK_VERSION = '0.1.0-p4-flash'
 const OLEAP_NAME_PREFIX = 'Oleap'
 const DIAGNOSTIC_LIMIT = 500
 const DEFAULT_SCAN_TIMEOUT_MS = 8000
@@ -34,6 +34,8 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 15000
 const DEFAULT_WRITE_TIMEOUT_MS = 8000
 const DEFAULT_CONTROL_TIMEOUT_MS = 3000
 const DEFAULT_RECORDING_COMMAND_TIMEOUT_MS = 3000
+const DEFAULT_FLASH_COMMAND_TIMEOUT_MS = 3000
+const FLASH_DOWNLOAD_FRAME_TIMEOUT_MS = 5000
 const CONTROL_MAX_ATTEMPTS = 3
 
 const COMMUNICATION_SERVICE_UUID = '00002001-0000-1000-8000-00805f9b34fb'
@@ -84,6 +86,14 @@ const RECORDING_COMMAND_SCENE_6 = 0x0681
 const RECORDING_COMMAND_SCENE_7 = 0x0781
 const RECORDING_RESPONSE_STOP = 0x0080
 const RECORDING_RESPONSE_START = 0x1280
+const FLASH_COMMAND_GET_FILE_COUNT = 0x0182
+const FLASH_COMMAND_GET_FILE_INFO = 0x0282
+const FLASH_COMMAND_DOWNLOAD = 0x0382
+const FLASH_COMMAND_DELETE = 0x0482
+const FLASH_COMMAND_STOP_UPLOAD = 0x1382
+const FLASH_NO_FILE_VALUE = 0xffffffff
+const FLASH_READ_ERROR_VALUE = 0xfefefefe
+const FLASH_DELETE_STATUS_SUCCESS = 0
 const RECORDING_FRAME_HEADER_LENGTH = 4
 const RECORDING_DECODER_FRAME_LEN = 80
 const RECORDING_DECODER_FRAME_BYTES = RECORDING_FRAME_HEADER_LENGTH + RECORDING_DECODER_FRAME_LEN
@@ -126,6 +136,12 @@ let recordingSession: any | null = null
 let recordingSessionCounter = 0
 let pendingRecordingCommand: any | null = null
 let recordingCommandTimeoutId: number | null = null
+let flashSession: any | null = null
+let pendingFlashCommand: any | null = null
+let flashCommandTimeoutId: number | null = null
+let flashDownloadTimeoutId: number | null = null
+let flashHeadFileId: number | null = null
+const flashFileListSnapshot = new Array<any>()
 let pendingConnectResolve: ((device: any) => void) | null = null
 let pendingConnectReject: ((error: OleapBleNativeError) => void) | null = null
 
@@ -242,6 +258,20 @@ function clearRecordingCommandTimeout(): void {
   }
 }
 
+function clearFlashCommandTimeout(): void {
+  if (flashCommandTimeoutId != null) {
+    clearTimeout(flashCommandTimeoutId!)
+    flashCommandTimeoutId = null
+  }
+}
+
+function clearFlashDownloadTimeout(): void {
+  if (flashDownloadTimeoutId != null) {
+    clearTimeout(flashDownloadTimeoutId!)
+    flashDownloadTimeoutId = null
+  }
+}
+
 function rejectControlRequest(request: any, error: OleapBleNativeError, emit: boolean = true): void {
   if (request == null || request.completed == true) {
     return
@@ -313,6 +343,61 @@ function resetRecordingProtocol(reason: string): void {
     })
   }
   recordingSession = null
+}
+
+function rejectFlashCommand(request: any, error: OleapBleNativeError, emit: boolean = true): void {
+  if (request == null || request.completed == true) {
+    return
+  }
+  request.completed = true
+  if (pendingFlashCommand == request) {
+    pendingFlashCommand = null
+  }
+  clearFlashCommandTimeout()
+  if (emit) {
+    emitError(error)
+  }
+  if (request.reject != null) {
+    request.reject(error)
+  }
+}
+
+function rejectFlashSession(active: any | null, error: OleapBleNativeError, emit: boolean = true): void {
+  if (active == null || active.completed == true) {
+    return
+  }
+  active.completed = true
+  if (flashSession == active) {
+    flashSession = null
+  }
+  clearFlashDownloadTimeout()
+  closeRecordingSessionStreams(active.session)
+  if (emit) {
+    emitError(error)
+  }
+  if (active.reject != null) {
+    active.reject(error)
+  }
+}
+
+function resetFlashProtocol(reason: string): void {
+  clearFlashCommandTimeout()
+  clearFlashDownloadTimeout()
+  const error = makeError(
+    'flash_disconnected',
+    reason,
+    'flash',
+    true,
+    { generation: sessionGeneration }
+  )
+  const pending = pendingFlashCommand
+  pendingFlashCommand = null
+  rejectFlashCommand(pending, error, false)
+  const active = flashSession
+  flashSession = null
+  rejectFlashSession(active, error, false)
+  flashHeadFileId = null
+  flashFileListSnapshot.splice(0, flashFileListSnapshot.length)
 }
 
 function getContext(): Context | null {
@@ -554,6 +639,7 @@ function closeGatt(recordDiagnostic: boolean = true): void {
   )
   resetControlProtocol('BLE 连接已断开，pending control transaction 已取消')
   resetRecordingProtocol('BLE 连接已断开，pending recording session 已取消')
+  resetFlashProtocol('BLE 连接已断开，pending flash session 已取消')
   sessionGeneration += 1
   if (gatt != null) {
     try {
@@ -1433,6 +1519,53 @@ function buildRecordingCommand(command: number, payload: Array<number> | null = 
   return frame
 }
 
+function buildFlashCommand(command: number, payload: Array<number>, needCrc: boolean = true): Array<number> {
+  const frame = buildRecordingCommand(command, payload)
+  if (!needCrc) {
+    return frame
+  }
+  const crcInput = byteSlice(frame, 2, 4 + payload.length)
+  const crc = controlCrc32(crcInput)
+  frame.push(crc & 0xff)
+  frame.push(Math.floor(crc / 256) & 0xff)
+  frame.push(Math.floor(crc / 65536) & 0xff)
+  frame.push(Math.floor(crc / 16777216) & 0xff)
+  return frame
+}
+
+function uint32Payload(value: number): Array<number> {
+  const payload = [0, 0, 0, 0]
+  writeUint32Le(payload, 0, value)
+  return payload
+}
+
+function buildFlashGetFileCountCommand(): Array<number> {
+  return buildFlashCommand(FLASH_COMMAND_GET_FILE_COUNT, [0], false)
+}
+
+function buildFlashGetFileInfoCommand(fileId: number): Array<number> {
+  return buildFlashCommand(FLASH_COMMAND_GET_FILE_INFO, uint32Payload(fileId), true)
+}
+
+function buildFlashDownloadCommand(fileId: number, startAddress: number, continuous: boolean = true): Array<number> {
+  const payload = new Array<number>()
+  for (let index = 0; index < 12; index++) {
+    payload.push(0)
+  }
+  writeUint32Le(payload, 0, continuous ? 0 : 1)
+  writeUint32Le(payload, 4, fileId)
+  writeUint32Le(payload, 8, startAddress)
+  return buildFlashCommand(FLASH_COMMAND_DOWNLOAD, payload, true)
+}
+
+function buildFlashStopUploadCommand(): Array<number> {
+  return buildFlashCommand(FLASH_COMMAND_STOP_UPLOAD, [0, 0], false)
+}
+
+function buildFlashDeleteCommand(fileId: number): Array<number> {
+  return buildFlashCommand(FLASH_COMMAND_DELETE, uint32Payload(fileId), true)
+}
+
 function recordingSceneCommandOf(value: any | null): any {
   const raw = value == null ? 'meeting' : `${value}`
   if (raw == 'meeting' || raw == '1') {
@@ -1525,9 +1658,141 @@ function splitRecordingFrames(bytes: Array<number>): any {
   }
 }
 
+function parseFlashRecordTime(bytes: Array<number>, offset: number): string | null {
+  let allUnknown = true
+  for (let index = 0; index < 6; index++) {
+    if ((bytes[offset + index] & 0xff) != 0xff) {
+      allUnknown = false
+    }
+  }
+  if (allUnknown) {
+    return null
+  }
+  const year = 2000 + (bytes[offset] & 0xff)
+  const month = `${bytes[offset + 1] & 0xff}`.padStart(2, '0')
+  const day = `${bytes[offset + 2] & 0xff}`.padStart(2, '0')
+  const hour = `${bytes[offset + 3] & 0xff}`.padStart(2, '0')
+  const minute = `${bytes[offset + 4] & 0xff}`.padStart(2, '0')
+  const second = `${bytes[offset + 5] & 0xff}`.padStart(2, '0')
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}+08:00`
+}
+
+function parseFlashFileInfo(bytes: Array<number>, offset: number): any {
+  const btAddr = byteSlice(bytes, offset + 12, offset + 18)
+  return {
+    fileVersion: readUint16Le(bytes, offset),
+    blockNum: readUint16Le(bytes, offset + 2),
+    fileId: readUint32Le(bytes, offset + 4),
+    fileLength: readUint32Le(bytes, offset + 8),
+    btAddr,
+    btAddrHex: bytesToHex(btAddr, btAddr.length).split(' ').join(':').toUpperCase(),
+    recordTime: parseFlashRecordTime(bytes, offset + 20),
+    recordType: bytes[offset + 26] & 0xff,
+    recordCh: bytes[offset + 27] & 0xff,
+    channels: bytes[offset + 27] & 0xff,
+    sampleRate: readUint16Le(bytes, offset + 28),
+    bitRate: readUint16Le(bytes, offset + 30)
+  }
+}
+
+function ensureFlashResponseLength(bytes: Array<number>, command: number, minimumDeclaredLength: number): number {
+  if (bytes.length < 4) {
+    throw makeError('flash_response_too_short', 'Flash 响应长度不足', 'flash', true, {
+      command,
+      length: bytes.length
+    })
+  }
+  const declaredLength = readUint16Le(bytes, 2)
+  if (declaredLength < minimumDeclaredLength || bytes.length < 4 + declaredLength) {
+    throw makeError('flash_response_length_mismatch', 'Flash 响应参数长度不匹配', 'flash', true, {
+      command,
+      declaredLength,
+      minimumDeclaredLength,
+      actualLength: bytes.length - 4
+    })
+  }
+  return declaredLength
+}
+
+function flashResponseCrcOf(bytes: Array<number>, declaredLength: number): number | null {
+  const crcOffset = 4 + declaredLength
+  if (bytes.length < crcOffset + 4) {
+    return null
+  }
+  return readUint32Le(bytes, crcOffset)
+}
+
+function parseFlashFileCountResponse(bytes: Array<number>): any {
+  const declaredLength = ensureFlashResponseLength(bytes, FLASH_COMMAND_GET_FILE_COUNT, 8)
+  const fileCount = readUint32Le(bytes, 4)
+  const fileStartId = readUint32Le(bytes, 8)
+  return {
+    kind: 'flash_count',
+    command: FLASH_COMMAND_GET_FILE_COUNT,
+    fileCount,
+    fileStartId,
+    empty: fileCount == 0 || fileCount == FLASH_NO_FILE_VALUE || fileStartId == FLASH_NO_FILE_VALUE,
+    crc32: flashResponseCrcOf(bytes, declaredLength)
+  }
+}
+
+function parseFlashFileInfoResponse(bytes: Array<number>): any {
+  const declaredLength = ensureFlashResponseLength(bytes, FLASH_COMMAND_GET_FILE_INFO, 36)
+  return {
+    kind: 'flash_info',
+    command: FLASH_COMMAND_GET_FILE_INFO,
+    isFileExist: readUint32Le(bytes, 4) == 1,
+    fileInfo: parseFlashFileInfo(bytes, 8),
+    crc32: flashResponseCrcOf(bytes, declaredLength)
+  }
+}
+
+function parseFlashDownloadResponse(bytes: Array<number>): any {
+  const declaredLength = ensureFlashResponseLength(bytes, FLASH_COMMAND_DOWNLOAD, 8)
+  const dataCapacity = declaredLength - 8
+  const dataStart = 12
+  const dataEnd = dataStart + dataCapacity
+  const returnLength = readUint32Le(bytes, 4)
+  return {
+    kind: 'flash_download',
+    command: FLASH_COMMAND_DOWNLOAD,
+    returnLength,
+    startAddress: readUint32Le(bytes, 8),
+    fileData: byteSlice(bytes, dataStart, dataEnd),
+    dataCapacity,
+    completed: returnLength < dataCapacity,
+    readError: returnLength == FLASH_READ_ERROR_VALUE,
+    fileMissing: returnLength == FLASH_NO_FILE_VALUE,
+    crc32: flashResponseCrcOf(bytes, declaredLength)
+  }
+}
+
+function parseFlashDeleteResponse(bytes: Array<number>): any {
+  const declaredLength = ensureFlashResponseLength(bytes, FLASH_COMMAND_DELETE, 8)
+  return {
+    kind: 'flash_delete',
+    command: FLASH_COMMAND_DELETE,
+    status: readUint32Le(bytes, 4),
+    fileId: readUint32Le(bytes, 8),
+    crc32: flashResponseCrcOf(bytes, declaredLength)
+  }
+}
+
 function parseRecordingResponse(bytes: Array<number>): any {
   if (bytes.length >= 2) {
     const command = readUint16Be(bytes, 0)
+    if (command == FLASH_COMMAND_GET_FILE_COUNT) {
+      return parseFlashFileCountResponse(bytes)
+    }
+    if (command == FLASH_COMMAND_GET_FILE_INFO) {
+      return parseFlashFileInfoResponse(bytes)
+    }
+    if (command == FLASH_COMMAND_DOWNLOAD) {
+      return parseFlashDownloadResponse(bytes)
+    }
+    if (command == FLASH_COMMAND_DELETE) {
+      return parseFlashDeleteResponse(bytes)
+    }
     if (command == RECORDING_RESPONSE_START || command == RECORDING_RESPONSE_STOP) {
       if (bytes.length < 4) {
         throw makeError('recording_response_too_short', '录音响应长度不足', 'recording', true, {
@@ -1656,6 +1921,8 @@ function createRecordingSession(scene: string, startResponse: any): any {
   const session = {
     sessionId: `android-${timestamp}-${recordingSessionCounter}`,
     scene,
+    source: 'realtime',
+    fileId: null,
     startedAt: nowIso(),
     stoppedAt: null,
     generation: sessionGeneration,
@@ -1685,10 +1952,28 @@ function createRecordingSession(scene: string, startResponse: any): any {
   return session
 }
 
+function createFlashRecordingSession(fileInfo: any): any {
+  const session = createRecordingSession('flash', {
+    recordChannel: 0,
+    packetLength: RECORDING_DECODER_FRAME_BYTES
+  })
+  session.source = 'flash'
+  session.fileId = fileInfo.fileId
+  session.expectedBytes = fileInfo.fileLength
+  session.downloadedBytes = 0
+  session.progress = 0
+  session.sampleRate = fileInfo.sampleRate == null ? RECORDING_SAMPLE_RATE : fileInfo.sampleRate
+  session.channels = fileInfo.channels == null ? 1 : fileInfo.channels
+  session.bitrate = fileInfo.bitRate == null ? 16000 : fileInfo.bitRate
+  return session
+}
+
 function recordingSessionSummary(session: any): any {
   return {
     sessionId: session.sessionId,
     scene: session.scene,
+    source: session.source == null ? 'realtime' : session.source,
+    fileId: session.fileId == null ? null : session.fileId,
     startedAt: session.startedAt,
     stoppedAt: session.stoppedAt,
     durationMs: session.durationMs,
@@ -1703,6 +1988,8 @@ function recordingSessionSummary(session: any): any {
     badFrames: session.badFrames,
     opusPayloadBytes: session.opusPayloadBytes,
     framedBytes: session.framedBytes,
+    downloadedBytes: session.downloadedBytes == null ? null : session.downloadedBytes,
+    expectedBytes: session.expectedBytes == null ? null : session.expectedBytes,
     opusRawPath: session.opusRawPath,
     framesPath: session.framesPath,
     recordChannel: session.recordChannel,
@@ -1728,8 +2015,12 @@ function emitRecordingProgress(session: any, force: boolean = false): void {
     sampleRate: session.sampleRate,
     channels: session.channels,
     bitrate: session.bitrate,
-    flash: false,
-    source: 'realtime'
+    flash: session.source == 'flash',
+    source: session.source == null ? 'realtime' : session.source,
+    progress: session.progress == null ? null : session.progress,
+    fileId: session.fileId == null ? null : session.fileId,
+    downloadedBytes: session.downloadedBytes == null ? null : session.downloadedBytes,
+    expectedBytes: session.expectedBytes == null ? null : session.expectedBytes
   }
   recordingProgressCallbacks.forEach((callback) => {
     callback(event)
@@ -1783,6 +2074,132 @@ function ensureRecordingReady(): OleapBleNativeError | null {
     return makeError('record_channel_not_ready', '录音协议通道尚未就绪', 'recording', true, channelReadySnapshot())
   }
   return null
+}
+
+function ensureFlashReady(): OleapBleNativeError | null {
+  const readyError = ensureRecordingReady()
+  if (readyError != null) {
+    return readyError
+  }
+  if (recordingSession != null || pendingRecordingCommand != null) {
+    return makeError('record_active', '实时录音中，不能操作 Flash 文件', 'flash', true)
+  }
+  if (flashSession != null) {
+    return makeError('flash_download_active', 'Flash 下载中，不能启动新的 Flash 命令', 'flash', true)
+  }
+  return null
+}
+
+function completeFlashCommand(request: any, value: any | null): void {
+  if (request == null || request.completed == true) {
+    return
+  }
+  clearFlashCommandTimeout()
+  request.completed = true
+  if (pendingFlashCommand == request) {
+    pendingFlashCommand = null
+  }
+  request.resolve(value)
+}
+
+function startFlashCommandTimeout(request: any): void {
+  clearFlashCommandTimeout()
+  flashCommandTimeoutId = setTimeout(() => {
+    if (pendingFlashCommand != request || request.completed == true) {
+      return
+    }
+    rejectFlashCommand(
+      request,
+      makeError('flash_command_timeout', 'Flash 协议命令超时', 'flash', true, {
+        kind: request.kind,
+        timeoutMs: DEFAULT_FLASH_COMMAND_TIMEOUT_MS,
+        generation: request.generation
+      })
+    )
+  }, DEFAULT_FLASH_COMMAND_TIMEOUT_MS)
+}
+
+function sendFlashCommand(kind: string, command: Array<number>): Promise<any> {
+  const readyError = ensureFlashReady()
+  if (readyError != null) {
+    return rejectWith<any>(readyError)
+  }
+  if (pendingFlashCommand != null) {
+    return rejectWith<any>(
+      makeError('flash_command_pending', '已有 Flash 协议命令正在等待响应', 'flash', true, {
+        kind: pendingFlashCommand.kind
+      })
+    )
+  }
+  return new Promise<any>((resolve, reject) => {
+    const request = {
+      kind,
+      generation: sessionGeneration,
+      completed: false,
+      resolve,
+      reject
+    }
+    pendingFlashCommand = request
+    startFlashCommandTimeout(request)
+    pushDiagnostic('flash_command_enqueued', {
+      kind,
+      length: command.length,
+      generation: sessionGeneration
+    })
+    writeRecordBytes(command, false)
+      .then(() => {
+        pushDiagnostic('flash_command_written', {
+          kind,
+          length: command.length,
+          generation: sessionGeneration
+        })
+      })
+      .catch((error) => {
+        rejectFlashCommand(
+          request,
+          makeError('flash_write_failed', 'Flash 协议命令写入失败', 'flash', true, {
+            kind,
+            error: `${error}`
+          })
+        )
+      })
+  })
+}
+
+function queryFlashFileCount(): Promise<any> {
+  return sendFlashCommand('count', buildFlashGetFileCountCommand())
+}
+
+function queryFlashFileInfo(fileId: number): Promise<any> {
+  return sendFlashCommand('info', buildFlashGetFileInfoCommand(fileId))
+}
+
+function queryFlashDelete(fileId: number): Promise<any> {
+  return sendFlashCommand('delete', buildFlashDeleteCommand(fileId))
+}
+
+function handleFlashCommandResponse(response: any): void {
+  const request = pendingFlashCommand
+  if (request == null) {
+    pushDiagnostic('unexpected_flash_response', response)
+    return
+  }
+  if (
+    (request.kind == 'count' && response.kind != 'flash_count') ||
+    (request.kind == 'info' && response.kind != 'flash_info') ||
+    (request.kind == 'delete' && response.kind != 'flash_delete')
+  ) {
+    pushDiagnostic('flash_response_kind_mismatch', {
+      expected: request.kind,
+      actual: response.kind
+    })
+    return
+  }
+  pushDiagnostic('flash_response_received', {
+    kind: response.kind,
+    generation: request.generation
+  })
+  completeFlashCommand(request, response)
 }
 
 function markRecordingFileWriteError(session: any, error: any): void {
@@ -2057,7 +2474,8 @@ function decodeRecordingSession(session: any, format: string): any {
     outOfOrderFrames: session.outOfOrderFrames,
     badFrames: session.badFrames,
     size: Number(outputFile.length()),
-    source: 'realtime',
+    source: session.source == null ? 'realtime' : session.source,
+    fileId: session.fileId == null ? null : session.fileId,
     opusRawPath: session.opusRawPath,
     framesPath: session.framesPath
   }
@@ -2080,15 +2498,7 @@ function updateRecordingIndexStats(session: any, dataIndex: number): void {
   session.lastIndex = dataIndex
 }
 
-function handleRecordingFrames(response: any): void {
-  const session = recordingSession
-  if (session == null) {
-    pushDiagnostic('recording_frames_without_session', {
-      frameCount: response.frames.length,
-      badFrames: response.badFrames
-    })
-    return
-  }
+function appendRecordingFramesToSession(session: any, response: any, diagnosticEvent: string): void {
   const payloadBatch = new Array<number>()
   const rawBatch = new Array<number>()
   const frames = response.frames as Array<any>
@@ -2124,14 +2534,171 @@ function handleRecordingFrames(response: any): void {
       markRecordingFileWriteError(session, error)
     }
   }
-  pushDiagnostic('recording_frames_received', {
+  pushDiagnostic(diagnosticEvent, {
     sessionId: session.sessionId,
+    source: session.source,
     frameCount: frames.length,
     badFrames: response.badFrames,
     totalFrames: session.frameCount,
     durationMs: session.durationMs
   })
   emitRecordingProgress(session)
+}
+
+function handleRecordingFrames(response: any): void {
+  const session = recordingSession
+  if (session == null) {
+    pushDiagnostic('recording_frames_without_session', {
+      frameCount: response.frames.length,
+      badFrames: response.badFrames
+    })
+    return
+  }
+  appendRecordingFramesToSession(session, response, 'recording_frames_received')
+}
+
+function startFlashDownloadTimeout(active: any): void {
+  clearFlashDownloadTimeout()
+  flashDownloadTimeoutId = setTimeout(() => {
+    if (flashSession != active || active.completed == true) {
+      return
+    }
+    try {
+      writeRecordBytes(buildFlashStopUploadCommand(), true)
+    } catch (_error) {}
+    rejectFlashSession(
+      active,
+      makeError('flash_download_timeout', 'Flash 文件数据帧超时', 'flash', true, {
+        fileId: active.fileInfo.fileId,
+        timeoutMs: FLASH_DOWNLOAD_FRAME_TIMEOUT_MS,
+        downloadedBytes: active.session.downloadedBytes
+      })
+    )
+  }, FLASH_DOWNLOAD_FRAME_TIMEOUT_MS)
+}
+
+function flashProgressOf(session: any): number {
+  const expected = Number(session.expectedBytes)
+  if (expected <= 0) {
+    return 0
+  }
+  const value = Math.floor(Number(session.downloadedBytes) * 100 / expected)
+  if (value < 0) return 0
+  if (value > 100) return 100
+  return value
+}
+
+function finalizeFlashDownloadSession(active: any): void {
+  if (active == null || active.completed == true) {
+    return
+  }
+  active.completed = true
+  clearFlashDownloadTimeout()
+  if (flashSession == active) {
+    flashSession = null
+  }
+  const session = active.session
+  session.stoppedAt = nowIso()
+  session.progress = 100
+  closeRecordingSessionStreams(session)
+  emitRecordingProgress(session, true)
+  try {
+    const result = decodeRecordingSession(session, active.format)
+    result.source = 'flash'
+    result.fileId = active.fileInfo.fileId
+    result.deleteAfterSuccess = active.deleteAfterSuccess
+    pushDiagnostic('flash_download_decoded', {
+      fileId: active.fileInfo.fileId,
+      filePath: result.filePath,
+      format: active.format,
+      size: result.size
+    })
+    if (active.deleteAfterSuccess == true) {
+      queryFlashDelete(active.fileInfo.fileId)
+        .then((deleteResult) => {
+          if (deleteResult.status != FLASH_DELETE_STATUS_SUCCESS) {
+            const details = {
+              fileId: active.fileInfo.fileId,
+              status: deleteResult.status,
+              currentHeadFileId: deleteResult.fileId
+            }
+            const error = makeError('flash_delete_failed', 'Flash 文件下载成功，但删除失败', 'flash', true, details)
+            emitError(error)
+            active.reject(error)
+            return
+          }
+          result.deleted = true
+          result.nextFileId = deleteResult.fileId
+          active.resolve(result)
+        })
+        .catch((error) => {
+          active.reject(error)
+        })
+      return
+    }
+    active.resolve(result)
+  } catch (error) {
+    const maybeError = error as any
+    if (maybeError != null && maybeError.code != null && maybeError.area != null) {
+      emitError(maybeError as OleapBleNativeError)
+      active.reject(maybeError)
+      return
+    }
+    const nativeError = makeError('flash_decode_failed', 'Flash 文件解码失败', 'flash', true, {
+      fileId: active.fileInfo.fileId,
+      error: `${error}`,
+      summary: recordingSessionSummary(session)
+    })
+    emitError(nativeError)
+    active.reject(nativeError)
+  }
+}
+
+function handleFlashDownloadResponse(response: any): void {
+  const active = flashSession
+  if (active == null) {
+    pushDiagnostic('unexpected_flash_download_response', response)
+    return
+  }
+  if (response.readError == true || response.fileMissing == true) {
+    rejectFlashSession(
+      active,
+      makeError('flash_download_failed', 'Flash 文件读取失败', 'flash', true, {
+        fileId: active.fileInfo.fileId,
+        returnLength: response.returnLength
+      })
+    )
+    return
+  }
+
+  const declaredBytes = Number(response.returnLength)
+  const data = response.fileData as Array<number>
+  const dataLength = declaredBytes < data.length ? declaredBytes : data.length
+  const frameBytes = byteSlice(data, 0, dataLength)
+  const split = splitRecordingFrames(frameBytes)
+  appendRecordingFramesToSession(active.session, {
+    frames: split.frames,
+    badFrames: split.badFrames
+  }, 'flash_frames_received')
+  active.session.downloadedBytes = Number(response.startAddress) + dataLength
+  active.session.progress = flashProgressOf(active.session)
+  pushDiagnostic('flash_download_chunk', {
+    fileId: active.fileInfo.fileId,
+    startAddress: response.startAddress,
+    returnLength: response.returnLength,
+    dataCapacity: response.dataCapacity,
+    downloadedBytes: active.session.downloadedBytes,
+    progress: active.session.progress,
+    completed: response.completed
+  })
+  emitRecordingProgress(active.session, true)
+
+  const expectedBytes = Number(active.session.expectedBytes)
+  if (response.completed == true || (expectedBytes > 0 && Number(active.session.downloadedBytes) >= expectedBytes)) {
+    finalizeFlashDownloadSession(active)
+    return
+  }
+  startFlashDownloadTimeout(active)
 }
 
 function handleRecordingStartResponse(response: any): void {
@@ -2260,6 +2827,14 @@ function handleRecordNotify(bytes: Array<number>, generation: number): void {
     }
     if (response.kind == 'stop') {
       handleRecordingStopResponse(response)
+      return
+    }
+    if (response.kind == 'flash_count' || response.kind == 'flash_info' || response.kind == 'flash_delete') {
+      handleFlashCommandResponse(response)
+      return
+    }
+    if (response.kind == 'flash_download') {
+      handleFlashDownloadResponse(response)
       return
     }
     handleRecordingFrames(response)
@@ -3205,15 +3780,199 @@ export function stopRecording(options: any | null = null): Promise<any> {
 }
 
 export function listFlashRecordings(): Promise<any> {
-  return notImplemented<any>('flash_not_ready', 'Flash 文件协议将在 P4 实现', 'flash')
+  return queryFlashFileCount().then((countResponse) => {
+    if (countResponse.empty == true) {
+      flashHeadFileId = null
+      flashFileListSnapshot.splice(0, flashFileListSnapshot.length)
+      return new Array<any>()
+    }
+    flashHeadFileId = countResponse.fileStartId
+    const count = Math.min(Number(countResponse.fileCount), 64)
+    const fileIds = new Array<number>()
+    for (let index = 0; index < count; index++) {
+      fileIds.push(normalizeUint32(Number(countResponse.fileStartId) + index))
+    }
+    return new Promise<any>((resolve, reject) => {
+      const results = new Array<any>()
+      const loadNext = (index: number): void => {
+        if (index >= fileIds.length) {
+          flashFileListSnapshot.splice(0, flashFileListSnapshot.length)
+          results.forEach((item) => {
+            flashFileListSnapshot.push(item)
+          })
+          resolve(results)
+          return
+        }
+        queryFlashFileInfo(fileIds[index])
+          .then((infoResponse) => {
+            if (infoResponse.isFileExist == true) {
+              const info = infoResponse.fileInfo
+              results.push({
+                fileId: info.fileId,
+                fileLength: info.fileLength,
+                fileVersion: info.fileVersion,
+                blockNum: info.blockNum,
+                recordType: info.recordType,
+                channels: info.channels,
+                sampleRate: info.sampleRate,
+                bitRate: info.bitRate,
+                recordTime: info.recordTime,
+                btAddrHex: info.btAddrHex
+              })
+            }
+            loadNext(index + 1)
+          })
+          .catch((error) => {
+            reject(error)
+          })
+      }
+      loadNext(0)
+    })
+  })
 }
 
 export function downloadFlashRecording(options: any): Promise<any> {
-  return notImplemented<any>('flash_not_ready', 'Flash 文件协议将在 P4 实现', 'flash')
+  const readyError = ensureFlashReady()
+  if (readyError != null) {
+    return rejectWith<any>(readyError)
+  }
+  if (pendingFlashCommand != null) {
+    return rejectWith<any>(
+      makeError('flash_command_pending', '已有 Flash 协议命令正在等待响应', 'flash', true, {
+        kind: pendingFlashCommand.kind
+      })
+    )
+  }
+
+  let format = 'wav'
+  try {
+    format = requestedRecordingFormatOf(options)
+  } catch (error) {
+    const maybeError = error as any
+    if (maybeError != null && maybeError.code != null && maybeError.area != null) {
+      return rejectWith<any>(maybeError as OleapBleNativeError)
+    }
+    return rejectWith<any>(
+      makeError('invalid_recording_format', '录音输出格式仅支持 wav 或 mp3', 'flash', false, { error: `${error}` })
+    )
+  }
+
+  if (options == null || options.fileId == null) {
+    return listFlashRecordings().then((files) => {
+      if (files.length == 0) {
+        return rejectWith<any>(
+          makeError('flash_file_missing', '没有可下载的 Flash 文件', 'flash', true)
+        )
+      }
+      const first = files[0]
+      return downloadFlashRecording({
+        fileId: first.fileId,
+        format,
+        deleteAfterSuccess: options == null ? false : options.deleteAfterSuccess == true
+      })
+    })
+  }
+
+  const fileId = Number(options.fileId)
+  if (!Number.isFinite(fileId) || fileId < 0) {
+    return rejectWith<any>(
+      makeError('invalid_flash_file_id', 'Flash fileId 必须是非负整数', 'flash', false, {
+        fileId: options.fileId
+      })
+    )
+  }
+  const deleteAfterSuccess = options.deleteAfterSuccess == true
+
+  const validateDeleteOrder = deleteAfterSuccess
+    ? queryFlashFileCount().then((countResponse) => {
+        if (countResponse.empty == true || Number(countResponse.fileStartId) != fileId) {
+          return Promise.reject<any>(
+            makeError('flash_delete_order_violation', '只能安全删除队首 Flash 文件', 'flash', false, {
+              requestedFileId: fileId,
+              headFileId: countResponse.fileStartId,
+              fileCount: countResponse.fileCount
+            })
+          )
+        }
+        flashHeadFileId = countResponse.fileStartId
+        return countResponse
+      })
+    : Promise.resolve(null)
+
+  return validateDeleteOrder
+    .then(() => queryFlashFileInfo(fileId))
+    .then((infoResponse) => {
+      if (infoResponse.isFileExist != true) {
+        return rejectWith<any>(
+          makeError('flash_file_missing', 'Flash 文件不存在', 'flash', true, { fileId })
+        )
+      }
+      return new Promise<any>((resolve, reject) => {
+        const fileInfo = infoResponse.fileInfo
+        const session = createFlashRecordingSession(fileInfo)
+        const active = {
+          fileInfo,
+          format,
+          deleteAfterSuccess,
+          session,
+          completed: false,
+          resolve,
+          reject
+        }
+        flashSession = active
+        emitRecordingProgress(session, true)
+        const command = buildFlashDownloadCommand(fileId, 0, true)
+        pushDiagnostic('flash_download_start', {
+          fileId,
+          fileLength: fileInfo.fileLength,
+          format,
+          deleteAfterSuccess
+        })
+        writeRecordBytes(command, false)
+          .then(() => {
+            startFlashDownloadTimeout(active)
+            pushDiagnostic('flash_download_written', {
+              fileId,
+              length: command.length
+            })
+          })
+          .catch((error) => {
+            rejectFlashSession(
+              active,
+              makeError('flash_write_failed', 'Flash 下载命令写入失败', 'flash', true, {
+                fileId,
+                error: `${error}`
+              })
+            )
+          })
+      })
+    })
 }
 
 export function stopFlashDownload(): Promise<void> {
-  return Promise.resolve()
+  const active = flashSession
+  if (active == null) {
+    return Promise.resolve()
+  }
+  rejectFlashSession(
+    active,
+    makeError('flash_download_interrupted', 'Flash 下载已停止', 'flash', true, {
+      fileId: active.fileInfo.fileId,
+      downloadedBytes: active.session.downloadedBytes
+    }),
+    false
+  )
+  return writeRecordBytes(buildFlashStopUploadCommand(), true)
+    .then(() => {
+      pushDiagnostic('flash_download_stop_written', {
+        fileId: active.fileInfo.fileId
+      })
+    })
+    .catch((error) => {
+      emitError(makeError('flash_stop_failed', '停止 Flash 下载命令写入失败', 'flash', true, {
+        error: `${error}`
+      }))
+    })
 }
 
 export function onDeviceFound(callback: NativeDeviceFoundCallback): () => void {
@@ -3290,6 +4049,19 @@ export function getDiagnostics(): any {
             kind: pendingRecordingCommand.kind,
             generation: pendingRecordingCommand.generation
           }
+    },
+    flash: {
+      active: flashSession == null
+        ? null
+        : recordingSessionSummary(flashSession.session),
+      pending: pendingFlashCommand == null
+        ? null
+        : {
+            kind: pendingFlashCommand.kind,
+            generation: pendingFlashCommand.generation
+          },
+      headFileId: flashHeadFileId,
+      cachedFileCount: flashFileListSnapshot.length
     },
     events: diagnostics.slice()
   }
