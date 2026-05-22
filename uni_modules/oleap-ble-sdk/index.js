@@ -25,6 +25,9 @@ const state = {
   diagnostics: []
 }
 
+let nativeAdapter = null
+let nativeAdapterLoadPromise = null
+
 const mockDevices = [
   {
     deviceId: 'mock-oleap-archer-a1',
@@ -77,6 +80,99 @@ function makeError(code, message, area = 'bluetooth', recoverable = true, detail
     recoverable,
     details
   }
+}
+
+function normalizeNativeAdapter(module) {
+  return module?.OleapBle || module?.default || module
+}
+
+async function loadNativeAdapter() {
+  if (nativeAdapter) {
+    return nativeAdapter
+  }
+  if (nativeAdapterLoadPromise) {
+    return nativeAdapterLoadPromise
+  }
+
+  nativeAdapterLoadPromise = (async () => {
+    let module = null
+    try {
+      // #ifdef APP-ANDROID
+      module = await import('./utssdk/app-android/index.uts')
+      // #endif
+      // #ifdef APP-IOS
+      module = await import('./utssdk/app-ios/index.uts')
+      // #endif
+    } catch (error) {
+      throw makeError(
+        'native_adapter_load_failed',
+        '无法加载 native UTS adapter，请确认在 HBuilderX App 运行环境中编译',
+        'sdk',
+        false,
+        { error: error?.message || `${error}` }
+      )
+    }
+
+    const adapter = normalizeNativeAdapter(module)
+    if (!adapter || typeof adapter.init !== 'function') {
+      throw makeError(
+        'native_adapter_missing',
+        '当前运行环境未提供 oleap-ble-sdk native adapter',
+        'sdk',
+        false
+      )
+    }
+    nativeAdapter = adapter
+    return adapter
+  })().finally(() => {
+    nativeAdapterLoadPromise = null
+  })
+
+  return nativeAdapterLoadPromise
+}
+
+function useNativeMode() {
+  return state.mock === false
+}
+
+async function nativeCall(name, args = []) {
+  const adapter = await loadNativeAdapter()
+  const method = adapter?.[name]
+  if (typeof method !== 'function') {
+    throw makeError('native_api_missing', `native adapter 缺少 ${name} 方法`, 'sdk', false, { name })
+  }
+  return method(...args)
+}
+
+function nativeCallSync(name, args = [], fallback = null) {
+  if (!nativeAdapter) {
+    return fallback
+  }
+  const method = nativeAdapter?.[name]
+  if (typeof method !== 'function') {
+    return fallback
+  }
+  return method(...args)
+}
+
+function nativeSubscribe(name, callback) {
+  if (typeof callback !== 'function') {
+    throw makeError('invalid_callback', `${name} requires a callback`, 'sdk', false)
+  }
+  if (!nativeAdapter) {
+    throw makeError(
+      'native_adapter_not_initialized',
+      `请先 await OleapBle.init({ mock: false }) 后再调用 ${name}`,
+      'sdk',
+      true,
+      { name }
+    )
+  }
+  const method = nativeAdapter?.[name]
+  if (typeof method !== 'function') {
+    throw makeError('native_api_missing', `native adapter 缺少 ${name} 方法`, 'sdk', false, { name })
+  }
+  return method(callback)
 }
 
 function pushDiagnostic(event, details = {}) {
@@ -151,6 +247,12 @@ export const OleapBle = {
   async init(options = {}) {
     state.mock = options.mock !== false
     state.logLevel = options.logLevel || 'info'
+    if (useNativeMode()) {
+      const result = await nativeCall('init', [options])
+      state.initialized = true
+      return result
+    }
+
     state.initialized = true
     pushDiagnostic('sdk_init', {
       version: SDK_VERSION,
@@ -160,6 +262,9 @@ export const OleapBle = {
   },
 
   async requestPermissions() {
+    if (useNativeMode()) {
+      return nativeCall('requestPermissions')
+    }
     ensureInitialized()
     pushDiagnostic('permission_result', {
       bluetooth: true,
@@ -173,6 +278,9 @@ export const OleapBle = {
   },
 
   async getBluetoothState() {
+    if (useNativeMode()) {
+      return nativeCall('getBluetoothState')
+    }
     ensureInitialized()
     return {
       supported: true,
@@ -182,6 +290,9 @@ export const OleapBle = {
   },
 
   async startScan(options = {}) {
+    if (useNativeMode()) {
+      return nativeCall('startScan', [options])
+    }
     ensureInitialized()
     if (state.scanning) {
       return
@@ -205,6 +316,9 @@ export const OleapBle = {
   },
 
   async stopScan() {
+    if (useNativeMode()) {
+      return nativeCall('stopScan')
+    }
     ensureInitialized()
     if (!state.scanning) {
       return
@@ -214,6 +328,9 @@ export const OleapBle = {
   },
 
   async connect({ deviceId } = {}) {
+    if (useNativeMode()) {
+      return nativeCall('connect', [{ deviceId }])
+    }
     ensureInitialized()
     const device = mockDevices.find((item) => item.deviceId === deviceId) || mockDevices[0]
     await this.stopScan()
@@ -238,6 +355,9 @@ export const OleapBle = {
   },
 
   async disconnect() {
+    if (useNativeMode()) {
+      return nativeCall('disconnect')
+    }
     ensureInitialized()
     clearRecordingTimer()
     state.recording = null
@@ -255,6 +375,12 @@ export const OleapBle = {
   },
 
   getConnectionState() {
+    if (useNativeMode()) {
+      return nativeCallSync('getConnectionState', [], {
+        connected: false,
+        device: null
+      })
+    }
     ensureInitialized()
     return {
       connected: Boolean(state.connectedDevice),
@@ -263,31 +389,49 @@ export const OleapBle = {
   },
 
   async getBattery() {
+    if (useNativeMode()) {
+      return nativeCall('getBattery')
+    }
     ensureConnected()
     return 86
   },
 
   async getSn() {
+    if (useNativeMode()) {
+      return nativeCall('getSn')
+    }
     ensureConnected()
     return 'MOCK-SN-20260522'
   },
 
   async getDeviceName() {
+    if (useNativeMode()) {
+      return nativeCall('getDeviceName')
+    }
     ensureConnected()
     return state.connectedDevice.name
   },
 
   async getFirmwareVersion() {
+    if (useNativeMode()) {
+      return nativeCall('getFirmwareVersion')
+    }
     ensureConnected()
     return '2.0.18'
   },
 
   async getHardwareVersion() {
+    if (useNativeMode()) {
+      return nativeCall('getHardwareVersion')
+    }
     ensureConnected()
     return '1.0.0'
   },
 
   async getEqMode() {
+    if (useNativeMode()) {
+      return nativeCall('getEqMode')
+    }
     ensureConnected()
     return {
       modeCount: 4,
@@ -297,6 +441,9 @@ export const OleapBle = {
   },
 
   async setEqMode({ mode }) {
+    if (useNativeMode()) {
+      return nativeCall('setEqMode', [{ mode }])
+    }
     ensureConnected()
     if (!Number.isInteger(mode) || mode < 0 || mode > 255) {
       return reportError(makeError('invalid_eq_mode', 'EQ 模式必须是 0-255 的整数', 'control', false, { mode }))
@@ -309,6 +456,9 @@ export const OleapBle = {
   },
 
   async getRecordState() {
+    if (useNativeMode()) {
+      return nativeCall('getRecordState')
+    }
     ensureConnected()
     const frameCount = state.recording?.frameCount || 0
     return {
@@ -319,6 +469,9 @@ export const OleapBle = {
   },
 
   async getFlashCapacity() {
+    if (useNativeMode()) {
+      return nativeCall('getFlashCapacity')
+    }
     ensureConnected()
     return {
       totalBlocks: 256,
@@ -329,6 +482,9 @@ export const OleapBle = {
   },
 
   async syncAppTime() {
+    if (useNativeMode()) {
+      return nativeCall('syncAppTime')
+    }
     ensureConnected()
     pushDiagnostic('sync_app_time', {
       time: nowIso()
@@ -336,6 +492,9 @@ export const OleapBle = {
   },
 
   async startRecording(options = {}) {
+    if (useNativeMode()) {
+      return nativeCall('startRecording', [options])
+    }
     ensureConnected()
     if (state.flashDownloading) {
       return reportError(makeError('flash_download_active', 'Flash 下载中，不能开始实时录音', 'recording', true))
@@ -380,6 +539,9 @@ export const OleapBle = {
   },
 
   async stopRecording(options = {}) {
+    if (useNativeMode()) {
+      return nativeCall('stopRecording', [options])
+    }
     ensureConnected()
     if (!state.recording) {
       return reportError(makeError('record_not_active', '当前没有进行中的录音', 'recording', true))
@@ -424,6 +586,9 @@ export const OleapBle = {
   },
 
   async listFlashRecordings() {
+    if (useNativeMode()) {
+      return nativeCall('listFlashRecordings')
+    }
     ensureConnected()
     pushDiagnostic('flash_list', {
       count: mockFlashFiles.length
@@ -432,6 +597,9 @@ export const OleapBle = {
   },
 
   async downloadFlashRecording({ fileId, format = 'wav', deleteAfterSuccess = false } = {}) {
+    if (useNativeMode()) {
+      return nativeCall('downloadFlashRecording', [{ fileId, format, deleteAfterSuccess }])
+    }
     ensureConnected()
     if (state.recording) {
       return reportError(makeError('record_active', '实时录音中，不能下载 Flash 文件', 'flash', true))
@@ -487,36 +655,64 @@ export const OleapBle = {
   },
 
   async stopFlashDownload() {
+    if (useNativeMode()) {
+      return nativeCall('stopFlashDownload')
+    }
     ensureInitialized()
     state.flashDownloading = false
     pushDiagnostic('flash_download_stop')
   },
 
   onDeviceFound(callback) {
+    if (useNativeMode()) {
+      return nativeSubscribe('onDeviceFound', callback)
+    }
     return subscribe('deviceFound', callback)
   },
 
   onConnectionChanged(callback) {
+    if (useNativeMode()) {
+      return nativeSubscribe('onConnectionChanged', callback)
+    }
     return subscribe('connectionChanged', callback)
   },
 
   onDpReport(callback) {
+    if (useNativeMode()) {
+      return nativeSubscribe('onDpReport', callback)
+    }
     return subscribe('dpReport', callback)
   },
 
   onRecordingProgress(callback) {
+    if (useNativeMode()) {
+      return nativeSubscribe('onRecordingProgress', callback)
+    }
     return subscribe('recordingProgress', callback)
   },
 
   onDecodeProgress(callback) {
+    if (useNativeMode()) {
+      return nativeSubscribe('onDecodeProgress', callback)
+    }
     return subscribe('decodeProgress', callback)
   },
 
   onError(callback) {
+    if (useNativeMode()) {
+      return nativeSubscribe('onError', callback)
+    }
     return subscribe('error', callback)
   },
 
   getDiagnostics() {
+    if (useNativeMode()) {
+      return nativeCallSync('getDiagnostics', [], {
+        version: SDK_VERSION,
+        mock: false,
+        events: []
+      })
+    }
     return {
       version: SDK_VERSION,
       mock: state.mock,
@@ -526,6 +722,9 @@ export const OleapBle = {
   },
 
   clearDiagnostics() {
+    if (useNativeMode()) {
+      return nativeCallSync('clearDiagnostics', [], undefined)
+    }
     state.diagnostics = []
   }
 }
@@ -563,4 +762,3 @@ export const getDiagnostics = OleapBle.getDiagnostics.bind(OleapBle)
 export const clearDiagnostics = OleapBle.clearDiagnostics.bind(OleapBle)
 
 export default OleapBle
-

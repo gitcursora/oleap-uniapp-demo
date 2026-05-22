@@ -2,6 +2,10 @@
   <view class="page">
     <view class="panel">
       <view class="title">Flash 文件</view>
+      <view class="row">
+        <text>模式</text>
+        <text class="value">{{ mock ? 'Mock' : 'Native' }}</text>
+      </view>
       <view class="button-row">
         <button class="primary-button" @click="loadFiles">刷新</button>
         <button class="secondary-button" @click="stopDownload">停止</button>
@@ -40,10 +44,12 @@
 
 <script>
 import { OleapBle } from '@/uni_modules/oleap-ble-sdk/index.js'
+import { formatSdkError, getDemoMockMode } from '@/utils/demo-runtime.js'
 
 export default {
   data() {
     return {
+      mock: true,
       files: [],
       progress: 0,
       result: null,
@@ -52,13 +58,16 @@ export default {
     }
   },
   async onLoad() {
-    await OleapBle.init({ mock: true, logLevel: 'debug' })
-    this.disposers.push(
-      OleapBle.onRecordingProgress((event) => {
-        if (!event.flash) return
-        this.progress = event.progress || 0
-      })
-    )
+    this.mock = getDemoMockMode()
+    await this.safeRun(async () => {
+      await OleapBle.init({ mock: this.mock, logLevel: 'debug' })
+      this.disposers.push(
+        OleapBle.onRecordingProgress((event) => {
+          if (!event.flash) return
+          this.progress = event.progress || 0
+        })
+      )
+    })
     await this.loadFiles()
   },
   onUnload() {
@@ -91,7 +100,7 @@ export default {
         this.error = ''
         await action()
       } catch (error) {
-        this.error = error.message || error.code || '操作失败'
+        this.error = formatSdkError(error) || '操作失败'
       }
     }
   }

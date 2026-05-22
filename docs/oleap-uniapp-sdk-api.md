@@ -17,7 +17,7 @@ await OleapBle.init({
 })
 ```
 
-Phase 0 默认使用 mock mode。后续原生实现完成后，业务页面不需要更换 API。
+默认使用 mock mode。App 真机环境可传 `mock: false` 走 UTS native adapter，业务页面不需要更换 API。Demo 页通过本地存储统一保存 Mock/Native 运行模式。
 
 ## 连接
 
@@ -61,7 +61,7 @@ const result = await OleapBle.stopRecording({
 })
 ```
 
-Android native 当前已能完成 start/stop、OPUS 帧切分、临时文件落盘和 WAV/MP3 输出。当前 Android decoder 使用 `*.oleapframes` 作为输入，要求帧布局为 `4B header + 80B OPUS payload`、单声道、16kHz；不满足时会明确返回 `opus_decoder_frame_layout_unsupported` 或 `opus_decoder_channels_unsupported`。
+`scene` 当前可传 `meeting`、`call`、`media`、`ambient`；`format` 当前支持 `wav` 和 `mp3`。Android native 当前已能完成 start/stop、OPUS 帧切分、临时文件落盘和 WAV/MP3 输出。当前 Android decoder 使用 `*.oleapframes` 作为输入，要求帧布局为 `4B header + 80B OPUS payload`、单声道、16kHz；不满足时会明确返回 `opus_decoder_frame_layout_unsupported` 或 `opus_decoder_channels_unsupported`。
 
 返回：
 
@@ -73,8 +73,13 @@ Android native 当前已能完成 start/stop、OPUS 帧切分、临时文件落�
   sampleRate: 16000,
   channels: 1,
   frameCount: 100,
+  frameLen: 84,
+  decodedFrames: 100,
+  failedFrames: 0,
+  pcmBytes: 64000,
   lostFrames: 0,
   outOfOrderFrames: 0,
+  badFrames: 0,
   size: 64044
 }
 ```

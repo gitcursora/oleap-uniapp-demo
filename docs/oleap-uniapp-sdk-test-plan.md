@@ -116,6 +116,7 @@ npm run check:p2-control
 
 ```sh
 npm run check:p3-recording
+npm run check:p3-demo
 ```
 
 覆盖：
@@ -131,6 +132,9 @@ npm run check:p3-recording
 - 停止录音后使用 `*.oleapframes` 输出 WAV/MP3。
 - decoder 输出文件存在性和大小校验存在。
 - 不满足 `4B header + 80B OPUS payload`、单声道、16kHz 的布局时明确失败，不伪装 WAV 成功。
+- Demo 层支持 Mock/Native 模式切换，并持久化运行模式。
+- Demo 录音页支持场景、WAV/MP3 输出、录音统计、解码进度、输出文件路径复制和转写入口。
+- Demo 层 SDK 错误码与 decoder 细节可见。
 
 待真机补齐：
 

@@ -6,6 +6,10 @@
         <text>模式</text>
         <text class="value">{{ mock ? 'Mock' : 'Native' }}</text>
       </view>
+      <view class="button-row mode-row">
+        <button :class="mock ? 'primary-button' : 'secondary-button'" @click="setRuntimeMode(true)">Mock</button>
+        <button :class="!mock ? 'primary-button' : 'secondary-button'" @click="setRuntimeMode(false)">Native</button>
+      </view>
       <view class="row">
         <text>蓝牙</text>
         <text class="value">{{ bluetooth.enabled ? '可用' : '不可用' }}</text>
@@ -53,6 +57,7 @@
 
 <script>
 import { OleapBle } from '@/uni_modules/oleap-ble-sdk/index.js'
+import { formatSdkError, getDemoMockMode, setDemoMockMode } from '@/utils/demo-runtime.js'
 
 export default {
   data() {
@@ -70,25 +75,80 @@ export default {
     }
   },
   async onLoad() {
-    await OleapBle.init({ mock: true, logLevel: 'debug' })
-    this.bluetooth = await OleapBle.getBluetoothState()
-    this.disposers.push(
-      OleapBle.onDeviceFound((device) => {
-        if (!this.devices.some((item) => item.deviceId === device.deviceId)) {
-          this.devices.push(device)
-        }
-      }),
-      OleapBle.onConnectionChanged((event) => {
-        this.connected = event.connected
-        this.connectedDevice = event.device || null
-      })
-    )
+    this.mock = getDemoMockMode()
+    await this.initializeSdk()
   },
   onUnload() {
-    this.disposers.forEach((dispose) => dispose())
-    this.disposers = []
+    this.disposeSubscriptions()
   },
   methods: {
+    async initializeSdk() {
+      await this.safeRun(async () => {
+        await OleapBle.init({ mock: this.mock, logLevel: 'debug' })
+        this.bluetooth = await OleapBle.getBluetoothState()
+        this.applyConnectionState()
+        this.installSubscriptions()
+      })
+    },
+    installSubscriptions() {
+      this.disposeSubscriptions()
+      this.disposers.push(
+        OleapBle.onDeviceFound((device) => {
+          if (!this.devices.some((item) => item.deviceId === device.deviceId)) {
+            this.devices.push(device)
+          }
+        }),
+        OleapBle.onConnectionChanged((event) => {
+          this.connected = event.connected
+          this.connectedDevice = event.device || null
+        })
+      )
+    },
+    disposeSubscriptions() {
+      this.disposers.forEach((dispose) => dispose())
+      this.disposers = []
+    },
+    applyConnectionState() {
+      const connection = OleapBle.getConnectionState()
+      this.connected = connection.connected
+      this.connectedDevice = connection.device || null
+    },
+    async setRuntimeMode(mock) {
+      const previousMock = this.mock
+      const nextMock = Boolean(mock)
+      if (previousMock === nextMock) {
+        return
+      }
+      this.disposeSubscriptions()
+      this.devices = []
+      this.connected = false
+      this.connectedDevice = null
+      try {
+        await OleapBle.disconnect()
+      } catch (error) {
+        // Native mode may not be initialized yet; switching mode should stay recoverable.
+      }
+      try {
+        this.error = ''
+        this.mock = nextMock
+        await OleapBle.init({ mock: nextMock, logLevel: 'debug' })
+        setDemoMockMode(nextMock)
+        this.bluetooth = await OleapBle.getBluetoothState()
+        this.applyConnectionState()
+        this.installSubscriptions()
+      } catch (error) {
+        this.error = formatSdkError(error)
+        this.mock = previousMock
+        setDemoMockMode(previousMock)
+        await OleapBle.init({ mock: previousMock, logLevel: 'debug' }).catch(() => {})
+        this.bluetooth = await OleapBle.getBluetoothState().catch(() => ({
+          supported: false,
+          enabled: false
+        }))
+        this.applyConnectionState()
+        this.installSubscriptions()
+      }
+    },
     async requestPermissions() {
       await this.safeRun(async () => {
         await OleapBle.requestPermissions()
@@ -119,9 +179,15 @@ export default {
         this.error = ''
         await action()
       } catch (error) {
-        this.error = error.message || error.code || '操作失败'
+        this.error = formatSdkError(error) || '操作失败'
       }
     }
   }
 }
 </script>
+
+<style scoped>
+.mode-row {
+  margin-bottom: 12rpx;
+}
+</style>

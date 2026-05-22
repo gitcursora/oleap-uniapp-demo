@@ -2,6 +2,10 @@
   <view class="page">
     <view class="panel">
       <view class="title">设备状态</view>
+      <view class="row">
+        <text>模式</text>
+        <text class="value">{{ mock ? 'Mock' : 'Native' }}</text>
+      </view>
       <view class="button-row">
         <button class="primary-button" @click="refresh">刷新</button>
         <button class="secondary-button" @click="setEq">切换 EQ</button>
@@ -60,10 +64,12 @@
 
 <script>
 import { OleapBle } from '@/uni_modules/oleap-ble-sdk/index.js'
+import { formatSdkError, getDemoMockMode } from '@/utils/demo-runtime.js'
 
 export default {
   data() {
     return {
+      mock: true,
       device: {
         battery: 0,
         sn: '',
@@ -88,13 +94,16 @@ export default {
     }
   },
   async onLoad() {
-    await OleapBle.init({ mock: true, logLevel: 'debug' })
-    this.disposers.push(
-      OleapBle.onDpReport((report) => {
-        this.reports.unshift(report)
-        this.reports = this.reports.slice(0, 8)
-      })
-    )
+    this.mock = getDemoMockMode()
+    await this.safeRun(async () => {
+      await OleapBle.init({ mock: this.mock, logLevel: 'debug' })
+      this.disposers.push(
+        OleapBle.onDpReport((report) => {
+          this.reports.unshift(report)
+          this.reports = this.reports.slice(0, 8)
+        })
+      )
+    })
     await this.refresh()
   },
   onUnload() {
@@ -125,7 +134,7 @@ export default {
         this.error = ''
         await action()
       } catch (error) {
-        this.error = error.message || error.code || '操作失败'
+        this.error = formatSdkError(error) || '操作失败'
       }
     }
   }
