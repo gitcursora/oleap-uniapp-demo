@@ -7,9 +7,9 @@
 - Phase 0 已实现：项目基线、SDK facade、UTS 插件骨架、mock mode、fixture 目录、静态验收脚本。
 - P1 Android 已完成：权限、蓝牙状态、扫描、停止扫描、Oleap 设备过滤、GATT 连接、服务发现、characteristic cache、notify 订阅、写队列和 generation 防护已写入 UTS 平台层。
 - P2 Android 已推进：控制协议 CRC/frame/DP 编解码、事务队列、主动上报 ACK、电量/SN/EQ/版本等设备 API 已接入 UTS 平台层。
-- P3 Android 已推进：实时录音 start/stop、响应解析、OPUS notify 帧切分、丢包统计、`.opusraw`/`.oleapframes` 落盘和录音进度已接入 UTS 平台层；libopus/WAV finalize 仍待下一步集成。
+- P3 Android 已推进：实时录音 start/stop、响应解析、OPUS notify 帧切分、丢包统计、`.opusraw`/`.oleapframes` 落盘、WAV/MP3 finalize 和录音进度已接入 UTS 平台层。
 - 默认使用 mock mode，可在没有耳机的情况下跑通页面和 API 调用链。
-- Flash 文件协议、iOS 原生 BLE 和 OPUS 解码在后续 Phase 实现。
+- Flash 文件协议和 iOS 原生 BLE 在后续 Phase 实现。
 
 检查：
 

@@ -22,7 +22,7 @@
 - 专家层 `queryDp/writeDp/getKnownDpSnapshot` 公开 API。
 - 更完整的 DP schema 访问控制。
 - 控制协议真机回归。
-- 实时录音 OPUS 解码和 WAV finalize。
+- 实时录音真机回归。
 - Flash 文件传输协议。
 - iOS 控制协议。
 

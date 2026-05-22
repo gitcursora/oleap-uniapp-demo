@@ -127,13 +127,15 @@ npm run check:p3-recording
 - OPUS bitrate、channels、frame time 可计算。
 - realtime session、pending command timeout、断连清理入口存在。
 - OPUS payload 和带头诊断帧写入 App 私有缓存目录。
-- decoder 未集成时返回 `opus_decode_unsupported`，不伪装 WAV 成功。
+- Android decoder AAR 已接入插件构建。
+- 停止录音后使用 `*.oleapframes` 输出 WAV/MP3。
+- decoder 输出文件存在性和大小校验存在。
+- 不满足 `4B header + 80B OPUS payload`、单声道、16kHz 的布局时明确失败，不伪装 WAV 成功。
 
-待 P3-6/P3-7 补齐：
+待真机补齐：
 
-- libopus bridge。
-- WAV writer。
-- 真机 WAV 可播放验证。
+- Android HBuilderX/UTS 编译验证。
+- 真实录音 WAV 可播放验证。
 
 ## Phase 4
 

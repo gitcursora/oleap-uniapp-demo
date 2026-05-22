@@ -13,8 +13,11 @@ import ScanSettings from 'android.bluetooth.le.ScanSettings'
 import Context from 'android.content.Context'
 import Build from 'android.os.Build'
 import File from 'java.io.File'
+import FileInputStream from 'java.io.FileInputStream'
 import FileOutputStream from 'java.io.FileOutputStream'
+import RandomAccessFile from 'java.io.RandomAccessFile'
 import UUID from 'java.util.UUID'
+import OpusDecoder from 'com.example.oleap.OpusDecoder'
 import { OleapBleNativeError } from '../unierror.uts'
 
 type NativeDeviceFoundCallback = (device: any) => void
@@ -23,7 +26,7 @@ type NativeDpCallback = (event: any) => void
 type NativeProgressCallback = (event: any) => void
 type NativeErrorCallback = (event: any) => void
 
-const SDK_VERSION = '0.1.0-p3-recording'
+const SDK_VERSION = '0.1.0-p3-decode'
 const OLEAP_NAME_PREFIX = 'Oleap'
 const DIAGNOSTIC_LIMIT = 500
 const DEFAULT_SCAN_TIMEOUT_MS = 8000
@@ -82,7 +85,12 @@ const RECORDING_COMMAND_SCENE_7 = 0x0781
 const RECORDING_RESPONSE_STOP = 0x0080
 const RECORDING_RESPONSE_START = 0x1280
 const RECORDING_FRAME_HEADER_LENGTH = 4
+const RECORDING_DECODER_FRAME_LEN = 80
+const RECORDING_DECODER_FRAME_BYTES = RECORDING_FRAME_HEADER_LENGTH + RECORDING_DECODER_FRAME_LEN
+const RECORDING_DECODER_FRAME_SAMPLES = 640
+const RECORDING_DECODE_FAILURE_THRESHOLD = 0.10
 const RECORDING_SAMPLE_RATE = 16000
+const RECORDING_PCM_BITS_PER_SAMPLE = 16
 const RECORDING_PROGRESS_THROTTLE_MS = 200
 
 let initialized = false
@@ -1657,6 +1665,8 @@ function createRecordingSession(scene: string, startResponse: any): any {
     channels: 1,
     bitrate: 32000,
     frameCount: 0,
+    frameLen: 0,
+    variableFrameLen: false,
     lostFrames: 0,
     outOfOrderFrames: 0,
     badFrames: 0,
@@ -1686,6 +1696,8 @@ function recordingSessionSummary(session: any): any {
     channels: session.channels,
     bitrate: session.bitrate,
     frameCount: session.frameCount,
+    frameLen: session.frameLen,
+    variableFrameLen: session.variableFrameLen,
     lostFrames: session.lostFrames,
     outOfOrderFrames: session.outOfOrderFrames,
     badFrames: session.badFrames,
@@ -1708,6 +1720,8 @@ function emitRecordingProgress(session: any, force: boolean = false): void {
     sessionId: session.sessionId,
     durationMs: session.durationMs,
     frameCount: session.frameCount,
+    frameLen: session.frameLen,
+    variableFrameLen: session.variableFrameLen,
     lostFrames: session.lostFrames,
     outOfOrderFrames: session.outOfOrderFrames,
     badFrames: session.badFrames,
@@ -1784,6 +1798,271 @@ function markRecordingFileWriteError(session: any, error: any): void {
   }))
 }
 
+function deleteFileSilently(path: string): void {
+  try {
+    const file = new File(path)
+    if (file.exists()) {
+      file.delete()
+    }
+  } catch (_error) {}
+}
+
+function recordingDecodedOutputPath(session: any, format: string): string {
+  return `${recordingOutputBasePath()}/${session.sessionId}.${format}`
+}
+
+function ensureRecordingDecodeLayout(session: any): void {
+  if (Number(session.frameCount) <= 0) {
+    throw makeError('recording_empty', '录音没有收到可解码的音频帧', 'recording', true, recordingSessionSummary(session))
+  }
+  if (Number(session.channels) != 1) {
+    throw makeError('opus_decoder_channels_unsupported', '当前 Android decoder 仅支持单声道 OPUS', 'recording', true, recordingSessionSummary(session))
+  }
+  if (Number(session.frameLen) != RECORDING_DECODER_FRAME_LEN || session.variableFrameLen == true) {
+    throw makeError(
+      'opus_decoder_frame_layout_unsupported',
+      '当前 Android decoder 仅支持 4B 帧头 + 80B OPUS payload 的连续帧文件',
+      'recording',
+      true,
+      recordingSessionSummary(session)
+    )
+  }
+  const inputFile = new File(session.framesPath)
+  if (!inputFile.exists() || Number(inputFile.length()) <= 0) {
+    throw makeError('opus_frame_file_missing', 'OPUS 帧诊断文件不存在或为空，无法解码', 'recording', true, recordingSessionSummary(session))
+  }
+}
+
+function writeAscii(bytes: Array<number>, offset: number, value: string): void {
+  for (let index = 0; index < value.length; index++) {
+    bytes[offset + index] = value.charCodeAt(index) & 0xff
+  }
+}
+
+function wavHeaderBytes(pcmSize: number, sampleRate: number, channels: number, bitsPerSample: number): Array<number> {
+  const header = new Array<number>()
+  for (let index = 0; index < 44; index++) {
+    header.push(0)
+  }
+  const byteRate = sampleRate * channels * Math.floor(bitsPerSample / 8)
+  const blockAlign = channels * Math.floor(bitsPerSample / 8)
+  writeAscii(header, 0, 'RIFF')
+  writeUint32Le(header, 4, 36 + pcmSize)
+  writeAscii(header, 8, 'WAVE')
+  writeAscii(header, 12, 'fmt ')
+  writeUint32Le(header, 16, 16)
+  writeUint16Le(header, 20, 1)
+  writeUint16Le(header, 22, channels)
+  writeUint32Le(header, 24, sampleRate)
+  writeUint32Le(header, 28, byteRate)
+  writeUint16Le(header, 32, blockAlign)
+  writeUint16Le(header, 34, bitsPerSample)
+  writeAscii(header, 36, 'data')
+  writeUint32Le(header, 40, pcmSize)
+  return header
+}
+
+function rewriteWavHeader(path: string, pcmSize: number, sampleRate: number, channels: number, bitsPerSample: number): void {
+  const file = new File(path)
+  const writer = new RandomAccessFile(file, 'rw')
+  try {
+    writer.seek(0)
+    writer.write(numbersToByteArray(wavHeaderBytes(pcmSize, sampleRate, channels, bitsPerSample)))
+  } finally {
+    writer.close()
+  }
+}
+
+function readFully(input: FileInputStream, buffer: ByteArray): number {
+  let total = 0
+  while (total < buffer.length) {
+    const readCount = input.read(buffer, total as Int, (buffer.length - total) as Int)
+    if (readCount <= 0) {
+      break
+    }
+    total += Number(readCount)
+  }
+  return total
+}
+
+function opusPayloadFromFrame(frame: ByteArray): ByteArray {
+  const payload: ByteArray = new ByteArray(RECORDING_DECODER_FRAME_LEN as Int)
+  for (let index = 0; index < RECORDING_DECODER_FRAME_LEN; index++) {
+    payload[index] = frame[index + RECORDING_FRAME_HEADER_LENGTH]
+  }
+  return payload
+}
+
+function closeFileInputStream(input: FileInputStream | null): void {
+  if (input == null) {
+    return
+  }
+  input.close()
+}
+
+function decodeRecordingFramesToWav(session: any, outputPath: string): any {
+  let input: FileInputStream | null = null
+  let output: FileOutputStream | null = null
+  const decoder = new OpusDecoder()
+  let decodedFrames = 0
+  let failedFrames = 0
+  let pcmBytes = 0
+  try {
+    if (!decoder.init()) {
+      throw makeError('opus_decoder_init_failed', 'OPUS decoder 初始化失败', 'recording', true, recordingSessionSummary(session))
+    }
+    input = new FileInputStream(new File(session.framesPath))
+    output = new FileOutputStream(new File(outputPath), false)
+    output.write(numbersToByteArray(wavHeaderBytes(0, RECORDING_SAMPLE_RATE, 1, RECORDING_PCM_BITS_PER_SAMPLE)))
+
+    const frame = new ByteArray(RECORDING_DECODER_FRAME_BYTES as Int)
+    let readCount = readFully(input, frame)
+    while (readCount == RECORDING_DECODER_FRAME_BYTES) {
+      const pcm = decoder.decode(opusPayloadFromFrame(frame), RECORDING_DECODER_FRAME_SAMPLES)
+      if (pcm != null) {
+        output.write(pcm)
+        pcmBytes += byteArrayToNumbers(pcm).length
+        decodedFrames += 1
+      } else {
+        failedFrames += 1
+      }
+      if (decodedFrames > 0 && decodedFrames % 25 == 0) {
+        emitDecodeProgress({
+          sessionId: session.sessionId,
+          phase: 'decoding',
+          progress: Math.floor(decodedFrames * 100 / Math.max(Number(session.frameCount), 1))
+        })
+      }
+      readCount = readFully(input, frame)
+    }
+    if (readCount > 0) {
+      failedFrames += 1
+    }
+  } catch (error) {
+    try {
+      decoder.release()
+    } catch (_releaseError) {}
+    try {
+      closeFileInputStream(input)
+    } catch (_inputCloseError) {}
+    try {
+      closeOutputStream(output)
+    } catch (_outputCloseError) {}
+    deleteFileSilently(outputPath)
+    const maybeError = error as any
+    if (maybeError != null && maybeError.code != null && maybeError.area != null) {
+      throw maybeError as OleapBleNativeError
+    }
+    const summary = recordingSessionSummary(session)
+    summary.error = `${error}`
+    throw makeError('opus_decode_failed', 'OPUS 解码失败', 'recording', true, summary)
+  }
+  try {
+    decoder.release()
+  } catch (_releaseError) {}
+  try {
+    closeFileInputStream(input)
+  } catch (_inputCloseError) {}
+  try {
+    closeOutputStream(output)
+  } catch (_outputCloseError) {}
+
+  if (decodedFrames <= 0 || pcmBytes <= 0) {
+    deleteFileSilently(outputPath)
+    const summary = recordingSessionSummary(session)
+    summary.decodedFrames = decodedFrames
+    summary.failedFrames = failedFrames
+    throw makeError('opus_decode_empty_output', 'OPUS 解码没有生成有效 PCM 数据', 'recording', true, summary)
+  }
+  const totalDecodedAttempts = decodedFrames + failedFrames
+  if (totalDecodedAttempts > 0 && failedFrames / totalDecodedAttempts > RECORDING_DECODE_FAILURE_THRESHOLD) {
+    deleteFileSilently(outputPath)
+    const summary = recordingSessionSummary(session)
+    summary.decodedFrames = decodedFrames
+    summary.failedFrames = failedFrames
+    summary.failureThreshold = RECORDING_DECODE_FAILURE_THRESHOLD
+    throw makeError('opus_decode_corruption_threshold', 'OPUS 解码失败帧比例过高', 'recording', true, summary)
+  }
+  rewriteWavHeader(outputPath, pcmBytes, RECORDING_SAMPLE_RATE, 1, RECORDING_PCM_BITS_PER_SAMPLE)
+  return {
+    decodedFrames,
+    failedFrames,
+    pcmBytes
+  }
+}
+
+function decodeRecordingFramesToMp3(session: any, outputPath: string): any {
+  const decoder = new OpusDecoder()
+  try {
+    decoder.decodeOpusToMp3(session.framesPath, outputPath)
+  } catch (error) {
+    try {
+      decoder.release()
+    } catch (_releaseError) {}
+    deleteFileSilently(outputPath)
+    const summary = recordingSessionSummary(session)
+    summary.error = `${error}`
+    throw makeError('opus_decode_failed', 'OPUS MP3 解码失败', 'recording', true, summary)
+  }
+  try {
+    decoder.release()
+  } catch (_releaseError) {}
+  return {
+    decodedFrames: session.frameCount,
+    failedFrames: 0,
+    pcmBytes: 0
+  }
+}
+
+function decodeRecordingSession(session: any, format: string): any {
+  ensureRecordingDecodeLayout(session)
+  const outputPath = recordingDecodedOutputPath(session, format)
+  deleteFileSilently(outputPath)
+  emitDecodeProgress({
+    sessionId: session.sessionId,
+    phase: 'decoding',
+    progress: 0
+  })
+  const decodeStats = format == 'mp3'
+    ? decodeRecordingFramesToMp3(session, outputPath)
+    : decodeRecordingFramesToWav(session, outputPath)
+
+  const outputFile = new File(outputPath)
+  const minimumSize = format == 'wav' ? 44 : 1
+  if (!outputFile.exists() || Number(outputFile.length()) <= minimumSize) {
+    deleteFileSilently(outputPath)
+    const summary = recordingSessionSummary(session)
+    summary.format = format
+    summary.outputPath = outputPath
+    summary.minimumSize = minimumSize
+    throw makeError('opus_decode_empty_output', 'OPUS 解码没有生成有效音频文件', 'recording', true, summary)
+  }
+  emitDecodeProgress({
+    sessionId: session.sessionId,
+    phase: 'finalizing',
+    progress: 100
+  })
+  return {
+    filePath: outputPath,
+    format,
+    durationMs: session.durationMs,
+    sampleRate: session.sampleRate,
+    channels: session.channels,
+    frameCount: session.frameCount,
+    frameLen: session.frameLen,
+    decodedFrames: decodeStats.decodedFrames,
+    failedFrames: decodeStats.failedFrames,
+    pcmBytes: decodeStats.pcmBytes,
+    lostFrames: session.lostFrames,
+    outOfOrderFrames: session.outOfOrderFrames,
+    badFrames: session.badFrames,
+    size: Number(outputFile.length()),
+    source: 'realtime',
+    opusRawPath: session.opusRawPath,
+    framesPath: session.framesPath
+  }
+}
+
 function updateRecordingIndexStats(session: any, dataIndex: number): void {
   if (session.lastIndex == null) {
     session.lastIndex = dataIndex
@@ -1817,6 +2096,11 @@ function handleRecordingFrames(response: any): void {
     const frame = frames[index]
     updateRecordingIndexStats(session, Number(frame.dataIndex))
     session.frameCount = Number(session.frameCount) + 1
+    if (Number(session.frameLen) == 0) {
+      session.frameLen = Number(frame.frameLen)
+    } else if (Number(session.frameLen) != Number(frame.frameLen)) {
+      session.variableFrameLen = true
+    }
     session.durationMs = Number(session.durationMs) + Number(frame.frameTimeMs)
     session.channels = Number(frame.channels)
     session.bitrate = Number(frame.bitrate)
@@ -1935,22 +2219,28 @@ function handleRecordingStopResponse(response: any): void {
     return
   }
 
-  emitDecodeProgress({
-    sessionId: session.sessionId,
-    phase: 'opus_decode_unsupported',
-    progress: 0
-  })
-  summary.requestedFormat = request.format
-  rejectRecordingCommand(
-    request,
-    makeError(
-      'opus_decode_unsupported',
-      '当前 Android UTS 插件尚未集成 libopus，无法输出 WAV/MP3；已保留 OPUS 诊断文件',
-      'recording',
-      true,
-      summary
+  try {
+    const result = decodeRecordingSession(session, request.format)
+    pushDiagnostic('recording_decode_completed', {
+      sessionId: session.sessionId,
+      format: request.format,
+      filePath: result.filePath,
+      size: result.size
+    })
+    completeRecordingCommand(request, result)
+  } catch (error) {
+    const maybeError = error as any
+    if (maybeError != null && maybeError.code != null && maybeError.area != null) {
+      rejectRecordingCommand(request, maybeError as OleapBleNativeError)
+      return
+    }
+    summary.requestedFormat = request.format
+    summary.error = `${error}`
+    rejectRecordingCommand(
+      request,
+      makeError('opus_decode_failed', 'OPUS 解码失败', 'recording', true, summary)
     )
-  )
+  }
 }
 
 function handleRecordNotify(bytes: Array<number>, generation: number): void {

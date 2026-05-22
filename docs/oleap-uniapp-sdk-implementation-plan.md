@@ -873,7 +873,7 @@ type OleapBleError = {
 
 ### Phase 3：实时录音 + WAV
 
-当前实施状态：Android 已完成 P3-1 到 P3-5，包括 start/stop、响应解析、OPUS frame splitter、realtime session 和 `*.opusraw`/`*.oleapframes` 落盘。P3-6/P3-7 尚未集成 libopus/WAV，因此 native 真机 `stopRecording({ format: 'wav' })` 暂时返回 `opus_decode_unsupported` 并保留 OPUS 诊断文件，不伪装 WAV 成功。
+当前实施状态：Android 已完成 P3-1 到 P3-7，包括 start/stop、响应解析、OPUS frame splitter、realtime session、`*.opusraw`/`*.oleapframes` 落盘，以及基于 `oleap-release.aar` 的 WAV/MP3 finalize。当前 Android decoder 输入为 `4B header + 80B OPUS payload` 的连续帧文件，SDK 使用 `*.oleapframes` 进入解码；其他帧布局会明确失败。
 
 任务：
 

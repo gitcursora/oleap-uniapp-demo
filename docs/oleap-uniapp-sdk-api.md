@@ -1,6 +1,6 @@
 # Oleap UniApp BLE SDK API
 
-状态：Phase 0 API 契约稳定；Android UTS 已接入扫描、连接、notify/write transport、控制协议和实时录音 OPUS 落盘。Flash、iOS 原生实现、Android libopus/WAV finalize 待后续 Phase 接入。
+状态：Phase 0 API 契约稳定；Android UTS 已接入扫描、连接、notify/write transport、控制协议、实时录音 OPUS 落盘和 WAV/MP3 finalize。Flash 与 iOS 原生实现待后续 Phase 接入。
 
 ## 导入
 
@@ -61,7 +61,7 @@ const result = await OleapBle.stopRecording({
 })
 ```
 
-Android native 当前已能完成 start/stop、OPUS 帧切分和临时文件落盘；在 libopus/WAV writer 集成前，真机 `stopRecording({ format: 'wav' })` 会返回 `opus_decode_unsupported`，错误详情中包含 `opusRawPath`、`framesPath` 和帧统计。mock mode 仍返回 WAV 路径，便于课堂页面先联调业务流程。
+Android native 当前已能完成 start/stop、OPUS 帧切分、临时文件落盘和 WAV/MP3 输出。当前 Android decoder 使用 `*.oleapframes` 作为输入，要求帧布局为 `4B header + 80B OPUS payload`、单声道、16kHz；不满足时会明确返回 `opus_decoder_frame_layout_unsupported` 或 `opus_decoder_channels_unsupported`。
 
 返回：
 
