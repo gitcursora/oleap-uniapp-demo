@@ -5,10 +5,10 @@
   "description": "Oleap BLE SDK teaching demo for uni-app.",
   "type": "module",
   "scripts": {
-    "check:phase0": "node scripts/check-phase0.mjs"
+    "check:phase0": "node scripts/check-phase0.mjs",
+    "check:p1-android": "node scripts/check-p1-android.mjs"
   },
   "engines": {
     "node": ">=18"
   }
 }
-

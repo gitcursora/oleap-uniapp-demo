@@ -36,6 +36,26 @@ Android 真机 BLE Host：
 - communication/record notify 订阅。
 - 断开后资源释放。
 
+当前静态验收：
+
+```sh
+npm run check:p1-android
+```
+
+覆盖：
+
+- Android BLE native import。
+- Android 12+ 蓝牙权限。
+- Android 11 及以下位置权限。
+- `UTSAndroid.requestSystemPermission` 和 `checkSystemPermissionGranted`。
+- `getBluetoothState`。
+- `startScan` / `stopScan`。
+- Oleap 设备名前缀过滤。
+- 扫描超时和清理。
+- `onDeviceFound` 订阅和取消订阅。
+- `getDiagnostics`。
+- `connect_not_implemented` 明确标记 P1-3 边界。
+
 ## Phase 2
 
 控制协议：
@@ -71,4 +91,3 @@ Flash：
 - 下载后 WAV 可播放。
 - 队首安全删除。
 - 非队首删除拒绝。
-

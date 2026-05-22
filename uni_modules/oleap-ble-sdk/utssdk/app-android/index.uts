@@ -1,128 +1,548 @@
-import { unsupportedPlatformError } from '../unierror.uts'
+import BluetoothAdapter from 'android.bluetooth.BluetoothAdapter'
+import BluetoothDevice from 'android.bluetooth.BluetoothDevice'
+import BluetoothManager from 'android.bluetooth.BluetoothManager'
+import ScanCallback from 'android.bluetooth.le.ScanCallback'
+import ScanResult from 'android.bluetooth.le.ScanResult'
+import ScanSettings from 'android.bluetooth.le.ScanSettings'
+import Context from 'android.content.Context'
+import Build from 'android.os.Build'
+import { OleapBleNativeError } from '../unierror.uts'
 
-function unsupportedPromise<T>(): Promise<T> {
-  return Promise.reject<T>(unsupportedPlatformError())
+type NativeDeviceFoundCallback = (device: any) => void
+type NativeConnectionCallback = (event: any) => void
+type NativeDpCallback = (event: any) => void
+type NativeProgressCallback = (event: any) => void
+type NativeErrorCallback = (event: any) => void
+
+const SDK_VERSION = '0.1.0-p1-android-scan'
+const OLEAP_NAME_PREFIX = 'Oleap'
+const DIAGNOSTIC_LIMIT = 500
+const DEFAULT_SCAN_TIMEOUT_MS = 8000
+
+let initialized = false
+let scanning = false
+let scannerCallback: OleapScanCallback | null = null
+let scanTimeoutId: number | null = null
+let connectedDeviceId: string | null = null
+
+const deviceFoundCallbacks = new Set<NativeDeviceFoundCallback>()
+const connectionCallbacks = new Set<NativeConnectionCallback>()
+const dpCallbacks = new Set<NativeDpCallback>()
+const recordingProgressCallbacks = new Set<NativeProgressCallback>()
+const decodeProgressCallbacks = new Set<NativeProgressCallback>()
+const errorCallbacks = new Set<NativeErrorCallback>()
+const diagnostics = new Array<any>()
+const discoveredDeviceIds = new Set<string>()
+
+function nowIso(): string {
+  return new Date().toISOString()
+}
+
+function pushDiagnostic(event: string, details: any | null = null): void {
+  diagnostics.push({
+    timestamp: nowIso(),
+    event,
+    details
+  })
+  if (diagnostics.length > DIAGNOSTIC_LIMIT) {
+    diagnostics.splice(0, diagnostics.length - DIAGNOSTIC_LIMIT)
+  }
+}
+
+function makeError(code: string, message: string, area: string, recoverable: boolean = true, details: any | null = null): OleapBleNativeError {
+  return new OleapBleNativeError(code, message, area as any, recoverable, details)
+}
+
+function emitError(error: OleapBleNativeError): void {
+  const event = {
+    code: error.code,
+    message: error.message,
+    area: error.area,
+    recoverable: error.recoverable,
+    details: error.details
+  }
+  pushDiagnostic('error', event)
+  errorCallbacks.forEach((callback) => {
+    callback(event)
+  })
+}
+
+function rejectWith<T>(error: OleapBleNativeError): Promise<T> {
+  emitError(error)
+  return Promise.reject<T>(error)
+}
+
+function getContext(): Context | null {
+  const context = UTSAndroid.getAppContext()
+  if (context == null) {
+    return null
+  }
+  return context as Context
+}
+
+function getBluetoothAdapter(): BluetoothAdapter | null {
+  const context = getContext()
+  if (context == null) {
+    return null
+  }
+  const service = context.getSystemService(Context.BLUETOOTH_SERVICE)
+  if (service == null) {
+    return null
+  }
+  const manager = service as BluetoothManager
+  return manager.getAdapter()
+}
+
+function requiredPermissions(): Array<string> {
+  if (Build.VERSION.SDK_INT >= 31) {
+    return [
+      'android.permission.BLUETOOTH_SCAN',
+      'android.permission.BLUETOOTH_CONNECT'
+    ]
+  }
+  return [
+    'android.permission.ACCESS_FINE_LOCATION'
+  ]
+}
+
+function hasRequiredPermissions(): boolean {
+  const activity = UTSAndroid.getUniActivity()
+  if (activity == null) {
+    return false
+  }
+  return UTSAndroid.checkSystemPermissionGranted(activity, requiredPermissions())
+}
+
+function permissionResult(): any {
+  const granted = hasRequiredPermissions()
+  return {
+    bluetooth: granted,
+    location: Build.VERSION.SDK_INT >= 31 ? true : granted,
+    androidSdk: Build.VERSION.SDK_INT
+  }
+}
+
+function ensureInitialized(): OleapBleNativeError | null {
+  if (initialized) {
+    return null
+  }
+  return makeError('sdk_not_initialized', '请先调用 OleapBle.init()', 'sdk', true)
+}
+
+function deviceNameOf(device: BluetoothDevice): string {
+  try {
+    const name = device.getName()
+    if (name != null && name.length > 0) {
+      return name
+    }
+  } catch (_error) {}
+  return ''
+}
+
+function scanRecordNameOf(result: ScanResult): string {
+  try {
+    const record = result.getScanRecord()
+    if (record != null) {
+      const name = record.getDeviceName()
+      if (name != null && name.length > 0) {
+        return name
+      }
+    }
+  } catch (_error) {}
+  return ''
+}
+
+function resultNameOf(result: ScanResult): string {
+  const device = result.getDevice()
+  if (device != null) {
+    const name = deviceNameOf(device)
+    if (name.length > 0) {
+      return name
+    }
+  }
+  return scanRecordNameOf(result)
+}
+
+function deviceAddressOf(device: BluetoothDevice): string {
+  try {
+    const address = device.getAddress()
+    if (address != null && address.length > 0) {
+      return address
+    }
+  } catch (_error) {}
+  return ''
+}
+
+function isOleapScanResult(result: ScanResult): boolean {
+  const device = result.getDevice()
+  if (device == null) {
+    return false
+  }
+  const name = resultNameOf(result)
+  return name.startsWith(OLEAP_NAME_PREFIX)
+}
+
+function toOleapDevice(result: ScanResult): any {
+  const device = result.getDevice()
+  const id = device == null ? '' : deviceAddressOf(device)
+  const name = resultNameOf(result)
+  return {
+    deviceId: id,
+    name: name.length > 0 ? name : 'Oleap Device',
+    rssi: result.getRssi(),
+    manufacturerDataHex: ''
+  }
+}
+
+function emitDeviceFound(device: any): void {
+  if (device.deviceId == null || device.deviceId.length == 0) {
+    return
+  }
+  if (discoveredDeviceIds.has(device.deviceId)) {
+    return
+  }
+  discoveredDeviceIds.add(device.deviceId)
+  pushDiagnostic('device_found', {
+    deviceId: device.deviceId,
+    name: device.name,
+    rssi: device.rssi
+  })
+  deviceFoundCallbacks.forEach((callback) => {
+    callback(device)
+  })
+}
+
+class OleapScanCallback extends ScanCallback {
+  override onScanResult(callbackType: number, result: ScanResult): void {
+    if (!isOleapScanResult(result)) {
+      return
+    }
+    emitDeviceFound(toOleapDevice(result))
+  }
+
+  override onBatchScanResults(results: Array<ScanResult>): void {
+    results.forEach((result) => {
+      if (isOleapScanResult(result)) {
+        emitDeviceFound(toOleapDevice(result))
+      }
+    })
+  }
+
+  override onScanFailed(errorCode: number): void {
+    scanning = false
+    scannerCallback = null
+    emitError(
+      makeError(
+        'scan_failed',
+        'Android BLE 扫描失败',
+        'bluetooth',
+        true,
+        { errorCode }
+      )
+    )
+  }
+}
+
+function stopScanInternal(recordDiagnostic: boolean = true): void {
+  if (scanTimeoutId != null) {
+    clearTimeout(scanTimeoutId!)
+    scanTimeoutId = null
+  }
+  if (!scanning) {
+    return
+  }
+  const adapter = getBluetoothAdapter()
+  const callback = scannerCallback
+  scannerCallback = null
+  scanning = false
+  try {
+    adapter?.getBluetoothLeScanner()?.stopScan(callback)
+  } catch (error) {
+    emitError(
+      makeError(
+        'scan_stop_failed',
+        '停止 Android BLE 扫描失败',
+        'bluetooth',
+        true,
+        { error: `${error}` }
+      )
+    )
+  }
+  if (recordDiagnostic) {
+    pushDiagnostic('scan_stop')
+  }
+}
+
+function notImplemented<T>(code: string, message: string, area: string): Promise<T> {
+  return rejectWith<T>(makeError(code, message, area, true))
 }
 
 export function init(options: any | null = null): Promise<void> {
-  return unsupportedPromise<void>()
+  initialized = true
+  pushDiagnostic('sdk_init', {
+    version: SDK_VERSION,
+    platform: 'android',
+    options
+  })
+  return Promise.resolve()
 }
 
 export function requestPermissions(): Promise<any> {
-  return unsupportedPromise<any>()
+  const initError = ensureInitialized()
+  if (initError != null) {
+    return rejectWith<any>(initError)
+  }
+  const activity = UTSAndroid.getUniActivity()
+  if (activity == null) {
+    return rejectWith<any>(
+      makeError('activity_missing', '无法获取当前 Activity', 'permission', true)
+    )
+  }
+  const permissions = requiredPermissions()
+  return new Promise<any>((resolve, reject) => {
+    UTSAndroid.requestSystemPermission(
+      activity,
+      permissions,
+      (allRight: boolean, grantedList: Array<string>) => {
+        const result = permissionResult()
+        pushDiagnostic('permission_result', {
+          allRight,
+          grantedList,
+          result
+        })
+        resolve(result)
+      },
+      (doNotAskAgain: boolean, grantedList: Array<string>) => {
+        const error = makeError(
+          doNotAskAgain ? 'permission_permanently_denied' : 'permission_denied',
+          '蓝牙权限未授予',
+          'permission',
+          !doNotAskAgain,
+          { grantedList }
+        )
+        emitError(error)
+        reject(error)
+      }
+    )
+  })
 }
 
 export function getBluetoothState(): Promise<any> {
-  return unsupportedPromise<any>()
+  const initError = ensureInitialized()
+  if (initError != null) {
+    return rejectWith<any>(initError)
+  }
+  const adapter = getBluetoothAdapter()
+  const state = {
+    supported: adapter != null,
+    enabled: adapter != null && adapter.isEnabled(),
+    androidSdk: Build.VERSION.SDK_INT
+  }
+  pushDiagnostic('bluetooth_state', state)
+  return Promise.resolve(state)
 }
 
 export function startScan(options: any | null = null): Promise<void> {
-  return unsupportedPromise<void>()
+  const initError = ensureInitialized()
+  if (initError != null) {
+    return rejectWith<void>(initError)
+  }
+  if (!hasRequiredPermissions()) {
+    return rejectWith<void>(
+      makeError('permission_denied', '请先授予蓝牙扫描权限', 'permission', true)
+    )
+  }
+  const adapter = getBluetoothAdapter()
+  if (adapter == null) {
+    return rejectWith<void>(
+      makeError('bluetooth_unsupported', '当前设备不支持蓝牙', 'bluetooth', false)
+    )
+  }
+  if (!adapter.isEnabled()) {
+    return rejectWith<void>(
+      makeError('bluetooth_off', '系统蓝牙未开启', 'bluetooth', true)
+    )
+  }
+  const scanner = adapter.getBluetoothLeScanner()
+  if (scanner == null) {
+    return rejectWith<void>(
+      makeError('scanner_unavailable', '无法获取 BLE 扫描器', 'bluetooth', true)
+    )
+  }
+
+  stopScanInternal(false)
+  discoveredDeviceIds.clear()
+  const callback = new OleapScanCallback()
+  scannerCallback = callback
+  const settings = new ScanSettings.Builder()
+    .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+    .build()
+  try {
+    scanner.startScan(null, settings, callback)
+    scanning = true
+    const requestedTimeoutMs = options != null && options.timeoutMs != null
+      ? Number(options.timeoutMs)
+      : DEFAULT_SCAN_TIMEOUT_MS
+    const timeoutMs = requestedTimeoutMs > 0 ? requestedTimeoutMs : DEFAULT_SCAN_TIMEOUT_MS
+    scanTimeoutId = setTimeout(() => {
+      stopScanInternal(true)
+    }, timeoutMs)
+    pushDiagnostic('scan_start', {
+      timeoutMs,
+      filter: OLEAP_NAME_PREFIX
+    })
+    return Promise.resolve()
+  } catch (error) {
+    scannerCallback = null
+    scanning = false
+    return rejectWith<void>(
+      makeError('scan_start_failed', '启动 Android BLE 扫描失败', 'bluetooth', true, { error: `${error}` })
+    )
+  }
 }
 
 export function stopScan(): Promise<void> {
-  return unsupportedPromise<void>()
+  const initError = ensureInitialized()
+  if (initError != null) {
+    return rejectWith<void>(initError)
+  }
+  stopScanInternal(true)
+  return Promise.resolve()
 }
 
 export function connect(options: any): Promise<any> {
-  return unsupportedPromise<any>()
+  return notImplemented<any>('connect_not_implemented', 'Android GATT 连接将在 P1-3 实现', 'connection')
 }
 
 export function disconnect(): Promise<void> {
-  return unsupportedPromise<void>()
+  stopScanInternal(true)
+  connectedDeviceId = null
+  connectionCallbacks.forEach((callback) => {
+    callback({ connected: false, device: null })
+  })
+  pushDiagnostic('disconnect_placeholder')
+  return Promise.resolve()
 }
 
 export function getConnectionState(): any {
-  return { connected: false, device: null }
+  return {
+    connected: connectedDeviceId != null,
+    device: null
+  }
 }
 
 export function getBattery(): Promise<number> {
-  return unsupportedPromise<number>()
+  return notImplemented<number>('control_not_ready', '控制协议将在 P2 实现', 'control')
 }
 
 export function getSn(): Promise<string> {
-  return unsupportedPromise<string>()
+  return notImplemented<string>('control_not_ready', '控制协议将在 P2 实现', 'control')
 }
 
 export function getDeviceName(): Promise<string> {
-  return unsupportedPromise<string>()
+  return notImplemented<string>('control_not_ready', '控制协议将在 P2 实现', 'control')
 }
 
 export function getFirmwareVersion(): Promise<string> {
-  return unsupportedPromise<string>()
+  return notImplemented<string>('control_not_ready', '控制协议将在 P2 实现', 'control')
 }
 
 export function getHardwareVersion(): Promise<string> {
-  return unsupportedPromise<string>()
+  return notImplemented<string>('control_not_ready', '控制协议将在 P2 实现', 'control')
 }
 
 export function getEqMode(): Promise<any> {
-  return unsupportedPromise<any>()
+  return notImplemented<any>('control_not_ready', '控制协议将在 P2 实现', 'control')
 }
 
 export function setEqMode(options: any): Promise<any> {
-  return unsupportedPromise<any>()
+  return notImplemented<any>('control_not_ready', '控制协议将在 P2 实现', 'control')
 }
 
 export function getRecordState(): Promise<any> {
-  return unsupportedPromise<any>()
+  return notImplemented<any>('control_not_ready', '控制协议将在 P2 实现', 'control')
 }
 
 export function getFlashCapacity(): Promise<any> {
-  return unsupportedPromise<any>()
+  return notImplemented<any>('control_not_ready', '控制协议将在 P2 实现', 'control')
 }
 
 export function syncAppTime(): Promise<void> {
-  return unsupportedPromise<void>()
+  return notImplemented<void>('control_not_ready', '控制协议将在 P2 实现', 'control')
 }
 
 export function startRecording(options: any | null = null): Promise<any> {
-  return unsupportedPromise<any>()
+  return notImplemented<any>('recording_not_ready', '录音协议将在 P3 实现', 'recording')
 }
 
 export function stopRecording(options: any | null = null): Promise<any> {
-  return unsupportedPromise<any>()
+  return notImplemented<any>('recording_not_ready', '录音协议将在 P3 实现', 'recording')
 }
 
 export function listFlashRecordings(): Promise<any> {
-  return unsupportedPromise<any>()
+  return notImplemented<any>('flash_not_ready', 'Flash 文件协议将在 P4 实现', 'flash')
 }
 
 export function downloadFlashRecording(options: any): Promise<any> {
-  return unsupportedPromise<any>()
+  return notImplemented<any>('flash_not_ready', 'Flash 文件协议将在 P4 实现', 'flash')
 }
 
 export function stopFlashDownload(): Promise<void> {
-  return unsupportedPromise<void>()
+  return Promise.resolve()
 }
 
-export function onDeviceFound(callback: any): () => void {
-  return () => {}
+export function onDeviceFound(callback: NativeDeviceFoundCallback): () => void {
+  deviceFoundCallbacks.add(callback)
+  return () => {
+    deviceFoundCallbacks.delete(callback)
+  }
 }
 
-export function onConnectionChanged(callback: any): () => void {
-  return () => {}
+export function onConnectionChanged(callback: NativeConnectionCallback): () => void {
+  connectionCallbacks.add(callback)
+  return () => {
+    connectionCallbacks.delete(callback)
+  }
 }
 
-export function onDpReport(callback: any): () => void {
-  return () => {}
+export function onDpReport(callback: NativeDpCallback): () => void {
+  dpCallbacks.add(callback)
+  return () => {
+    dpCallbacks.delete(callback)
+  }
 }
 
-export function onRecordingProgress(callback: any): () => void {
-  return () => {}
+export function onRecordingProgress(callback: NativeProgressCallback): () => void {
+  recordingProgressCallbacks.add(callback)
+  return () => {
+    recordingProgressCallbacks.delete(callback)
+  }
 }
 
-export function onDecodeProgress(callback: any): () => void {
-  return () => {}
+export function onDecodeProgress(callback: NativeProgressCallback): () => void {
+  decodeProgressCallbacks.add(callback)
+  return () => {
+    decodeProgressCallbacks.delete(callback)
+  }
 }
 
-export function onError(callback: any): () => void {
-  return () => {}
+export function onError(callback: NativeErrorCallback): () => void {
+  errorCallbacks.add(callback)
+  return () => {
+    errorCallbacks.delete(callback)
+  }
 }
 
 export function getDiagnostics(): any {
-  return { events: [] }
+  return {
+    version: SDK_VERSION,
+    platform: 'android',
+    scanning,
+    connected: connectedDeviceId != null,
+    events: diagnostics.slice()
+  }
 }
 
-export function clearDiagnostics(): void {}
-
+export function clearDiagnostics(): void {
+  diagnostics.splice(0, diagnostics.length)
+}
