@@ -19,6 +19,10 @@ if (!existsSync(resolve(root, 'docs/phase-1-android-connect-acceptance-report.md
   fail('Missing Phase 1 Android connect acceptance report')
 }
 
+if (!existsSync(resolve(root, 'docs/phase-1-android-notify-write-acceptance-report.md'))) {
+  fail('Missing Phase 1 Android notify/write acceptance report')
+}
+
 function fail(message) {
   throw new Error(message)
 }
@@ -40,6 +44,7 @@ const requiredAndroidImports = [
   'android.bluetooth.BluetoothGatt',
   'android.bluetooth.BluetoothGattCallback',
   'android.bluetooth.BluetoothGattCharacteristic',
+  'android.bluetooth.BluetoothGattDescriptor',
   'android.bluetooth.BluetoothGattService',
   'android.bluetooth.BluetoothManager',
   'android.bluetooth.BluetoothProfile',
@@ -117,6 +122,44 @@ for (const text of requiredGattStrings) {
 mustMatch(androidIndex, /class\s+OleapGattCallback\s+extends\s+BluetoothGattCallback/, 'BluetoothGattCallback subclass')
 mustMatch(androidIndex, /override\s+onConnectionStateChange/, 'onConnectionStateChange override')
 mustMatch(androidIndex, /override\s+onServicesDiscovered/, 'onServicesDiscovered override')
+
+const requiredTransportStrings = [
+  'CLIENT_CHARACTERISTIC_CONFIG_UUID',
+  'BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE',
+  'setCharacteristicNotification',
+  'writeDescriptor',
+  'onDescriptorWrite',
+  'onCharacteristicChanged',
+  'onCharacteristicWrite',
+  'writeQueue',
+  'activeWriteRequest',
+  'processNextWrite',
+  'writeCommunicationBytes',
+  'writeRecordBytes',
+  'numbersToByteArray',
+  'ByteArray',
+  'DEFAULT_WRITE_TIMEOUT_MS',
+  'write_timeout',
+  'write_channel_not_ready',
+  'rejectQueuedWrites',
+  'ble_disconnected',
+  'notificationsReady',
+  'notifyEnableGeneration',
+  'stale_gatt_callback_ignored',
+  'stale_characteristic_write_ignored',
+  'communication_notify',
+  'record_notify',
+  'required_characteristic_missing'
+]
+
+for (const text of requiredTransportStrings) {
+  mustContain(androidIndex, text, 'notify/write transport boundary')
+}
+
+mustMatch(androidIndex, /constructor\(generation:\s*number\)/, 'GATT callback generation constructor')
+mustMatch(androidIndex, /new\s+OleapGattCallback\(generationAtStart\)/, 'GATT callback generation binding')
+mustMatch(androidIndex, /@UTSJS\.keepAlive\s+override\s+onCharacteristicChanged/, 'keepAlive notify callback')
+mustMatch(androidIndex, /@UTSJS\.keepAlive\s+override\s+onCharacteristicWrite/, 'keepAlive write callback')
 
 if (androidIndex.includes('unsupportedPlatformError')) {
   fail('Android P1 implementation must not use unsupportedPlatformError')

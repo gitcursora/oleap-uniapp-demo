@@ -3,6 +3,7 @@ import BluetoothDevice from 'android.bluetooth.BluetoothDevice'
 import BluetoothGatt from 'android.bluetooth.BluetoothGatt'
 import BluetoothGattCallback from 'android.bluetooth.BluetoothGattCallback'
 import BluetoothGattCharacteristic from 'android.bluetooth.BluetoothGattCharacteristic'
+import BluetoothGattDescriptor from 'android.bluetooth.BluetoothGattDescriptor'
 import BluetoothGattService from 'android.bluetooth.BluetoothGattService'
 import BluetoothManager from 'android.bluetooth.BluetoothManager'
 import BluetoothProfile from 'android.bluetooth.BluetoothProfile'
@@ -20,11 +21,12 @@ type NativeDpCallback = (event: any) => void
 type NativeProgressCallback = (event: any) => void
 type NativeErrorCallback = (event: any) => void
 
-const SDK_VERSION = '0.1.0-p1-android-connect'
+const SDK_VERSION = '0.1.0-p1-android-transport'
 const OLEAP_NAME_PREFIX = 'Oleap'
 const DIAGNOSTIC_LIMIT = 500
 const DEFAULT_SCAN_TIMEOUT_MS = 8000
 const DEFAULT_CONNECT_TIMEOUT_MS = 15000
+const DEFAULT_WRITE_TIMEOUT_MS = 8000
 
 const COMMUNICATION_SERVICE_UUID = '00002001-0000-1000-8000-00805f9b34fb'
 const COMMUNICATION_NOTIFY_UUID = '0000c92a-0000-1000-8000-00805f9b34fb'
@@ -32,6 +34,7 @@ const COMMUNICATION_WRITE_UUID = '0000ca2a-0000-1000-8000-00805f9b34fb'
 const RECORD_SERVICE_UUID = '65786365-6c70-6f69-6e74-2e636f820000'
 const RECORD_NOTIFY_UUID = '65786365-6c70-6f69-6e74-2e636f820003'
 const RECORD_WRITE_UUID = '65786365-6c70-6f69-6e74-2e636f820004'
+const CLIENT_CHARACTERISTIC_CONFIG_UUID = '00002902-0000-1000-8000-00805f9b34fb'
 
 let initialized = false
 let scanning = false
@@ -50,6 +53,13 @@ let communicationWriteChar: BluetoothGattCharacteristic | null = null
 let communicationNotifyChar: BluetoothGattCharacteristic | null = null
 let recordWriteChar: BluetoothGattCharacteristic | null = null
 let recordNotifyChar: BluetoothGattCharacteristic | null = null
+let enablingNotifications = false
+let notifyEnableGeneration = 0
+let activeNotifyDescriptor: BluetoothGattDescriptor | null = null
+const pendingNotifyDescriptors = new Array<BluetoothGattDescriptor>()
+let activeWriteRequest: any | null = null
+const writeQueue = new Array<any>()
+let writeTimeoutId: number | null = null
 let pendingConnectResolve: ((device: any) => void) | null = null
 let pendingConnectReject: ((error: OleapBleNativeError) => void) | null = null
 
@@ -126,6 +136,28 @@ function rejectPendingConnect(error: OleapBleNativeError): void {
   emitError(error)
   if (reject != null) {
     reject(error)
+  }
+}
+
+function clearWriteTimeout(): void {
+  if (writeTimeoutId != null) {
+    clearTimeout(writeTimeoutId!)
+    writeTimeoutId = null
+  }
+}
+
+function rejectQueuedWrites(error: OleapBleNativeError): void {
+  clearWriteTimeout()
+  const active = activeWriteRequest
+  activeWriteRequest = null
+  if (active != null && active.reject != null) {
+    active.reject(error)
+  }
+  while (writeQueue.length > 0) {
+    const request = writeQueue.shift()
+    if (request != null && request.reject != null) {
+      request.reject(error)
+    }
   }
 }
 
@@ -270,13 +302,15 @@ function emitDeviceFound(device: any): void {
 }
 
 class OleapScanCallback extends ScanCallback {
-  override onScanResult(callbackType: number, result: ScanResult): void {
+  @UTSJS.keepAlive
+  override onScanResult(callbackType: Int, result: ScanResult): void {
     if (!isOleapScanResult(result)) {
       return
     }
     emitDeviceFound(toOleapDevice(result))
   }
 
+  @UTSJS.keepAlive
   override onBatchScanResults(results: Array<ScanResult>): void {
     results.forEach((result) => {
       if (isOleapScanResult(result)) {
@@ -285,7 +319,8 @@ class OleapScanCallback extends ScanCallback {
     })
   }
 
-  override onScanFailed(errorCode: number): void {
+  @UTSJS.keepAlive
+  override onScanFailed(errorCode: Int): void {
     scanning = false
     scannerCallback = null
     emitError(
@@ -339,6 +374,10 @@ function clearCharacteristicCache(): void {
   communicationNotifyChar = null
   recordWriteChar = null
   recordNotifyChar = null
+  enablingNotifications = false
+  notifyEnableGeneration = 0
+  activeNotifyDescriptor = null
+  pendingNotifyDescriptors.splice(0, pendingNotifyDescriptors.length)
 }
 
 function closeGatt(recordDiagnostic: boolean = true): void {
@@ -347,6 +386,7 @@ function closeGatt(recordDiagnostic: boolean = true): void {
     connectTimeoutId = null
   }
   const gatt = connectedGatt
+  const hadGatt = gatt != null
   connectedGatt = null
   gattCallback = null
   pendingDeviceId = null
@@ -355,6 +395,9 @@ function closeGatt(recordDiagnostic: boolean = true): void {
   connectedDeviceName = null
   connecting = false
   clearCharacteristicCache()
+  rejectQueuedWrites(
+    makeError('ble_disconnected', 'BLE 连接已断开，pending write 已取消', 'connection', true)
+  )
   sessionGeneration += 1
   if (gatt != null) {
     try {
@@ -366,6 +409,7 @@ function closeGatt(recordDiagnostic: boolean = true): void {
   }
   if (recordDiagnostic) {
     pushDiagnostic('gatt_closed', {
+      hadGatt,
       generation: sessionGeneration
     })
   }
@@ -420,7 +464,10 @@ function cacheRequiredCharacteristics(gatt: BluetoothGatt): boolean {
 function channelReadySnapshot(): any {
   return {
     communicationReady: communicationWriteChar != null && communicationNotifyChar != null,
-    recordReady: recordWriteChar != null && recordNotifyChar != null
+    recordReady: recordWriteChar != null && recordNotifyChar != null,
+    notificationsReady: !enablingNotifications &&
+      communicationNotifyChar != null &&
+      recordNotifyChar != null
   }
 }
 
@@ -436,8 +483,305 @@ function emitConnectionChanged(connected: boolean, device: any | null = null): v
   })
 }
 
+function byteArrayToNumbers(value: ByteArray | null): Array<number> {
+  const result = new Array<number>()
+  if (value == null) {
+    return result
+  }
+  for (let i in value.indices) {
+    result.push(value[i].toInt() & 0xff)
+  }
+  return result
+}
+
+function numbersToByteArray(value: Array<number>): ByteArray {
+  const bytes: ByteArray = new ByteArray(value.length as Int)
+  for (let index = 0; index < value.length; index++) {
+    const normalized = value[index as Int] & 0xff
+    bytes[index] = normalized.toByte()
+  }
+  return bytes
+}
+
+function handleCommunicationNotify(bytes: Array<number>, generation: number): void {
+  if (generation != sessionGeneration) {
+    pushDiagnostic('stale_communication_notify_ignored', { generation, current: sessionGeneration })
+    return
+  }
+  pushDiagnostic('communication_notify', {
+    length: bytes.length,
+    generation
+  })
+}
+
+function handleRecordNotify(bytes: Array<number>, generation: number): void {
+  if (generation != sessionGeneration) {
+    pushDiagnostic('stale_record_notify_ignored', { generation, current: sessionGeneration })
+    return
+  }
+  pushDiagnostic('record_notify', {
+    length: bytes.length,
+    generation
+  })
+}
+
+function descriptorForNotify(characteristic: BluetoothGattCharacteristic | null): BluetoothGattDescriptor | null {
+  if (characteristic == null) {
+    return null
+  }
+  return characteristic.getDescriptor(UUID.fromString(CLIENT_CHARACTERISTIC_CONFIG_UUID))
+}
+
+function failNotificationEnable(gatt: BluetoothGatt, code: string, details: any | null = null): void {
+  const error = makeError(code, '开启 Android BLE notify 失败', 'connection', true, details)
+  closeGatt(true)
+  rejectPendingConnect(error)
+}
+
+function finishConnectionReady(gatt: BluetoothGatt): void {
+  const device = gatt.getDevice()
+  connectedDeviceId = pendingDeviceId ?? (device == null ? '' : deviceAddressOf(device))
+  connectedDeviceName = pendingDeviceName ?? (device == null ? null : deviceNameOf(device))
+  const deviceInfo = {
+    deviceId: connectedDeviceId,
+    name: connectedDeviceName ?? 'Oleap Device',
+    rssi: 0,
+    manufacturerDataHex: ''
+  }
+  connecting = false
+  enablingNotifications = false
+  pushDiagnostic('channels_ready', channelReadySnapshot())
+  emitConnectionChanged(true, deviceInfo)
+  resolvePendingConnect(deviceInfo)
+}
+
+function writeNextNotifyDescriptor(gatt: BluetoothGatt): void {
+  const descriptor = pendingNotifyDescriptors.shift()
+  if (descriptor == null) {
+    activeNotifyDescriptor = null
+    finishConnectionReady(gatt)
+    return
+  }
+  activeNotifyDescriptor = descriptor
+  try {
+    descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+    const started = gatt.writeDescriptor(descriptor)
+    if (!started) {
+      failNotificationEnable(gatt, 'notify_descriptor_write_rejected', {
+        uuid: descriptor.getUuid().toString()
+      })
+    }
+  } catch (error) {
+    failNotificationEnable(gatt, 'notify_descriptor_write_failed', {
+      error: `${error}`,
+      uuid: descriptor.getUuid().toString()
+    })
+  }
+}
+
+function enableRequiredNotifications(gatt: BluetoothGatt): void {
+  enablingNotifications = true
+  notifyEnableGeneration = sessionGeneration
+  pendingNotifyDescriptors.splice(0, pendingNotifyDescriptors.length)
+
+  const communicationDescriptor = descriptorForNotify(communicationNotifyChar)
+  const recordDescriptor = descriptorForNotify(recordNotifyChar)
+  if (communicationDescriptor == null || recordDescriptor == null) {
+    failNotificationEnable(gatt, 'notify_descriptor_missing', {
+      communicationDescriptor: communicationDescriptor != null,
+      recordDescriptor: recordDescriptor != null
+    })
+    return
+  }
+
+  try {
+    const communicationEnabled = gatt.setCharacteristicNotification(communicationNotifyChar, true)
+    const recordEnabled = gatt.setCharacteristicNotification(recordNotifyChar, true)
+    if (!communicationEnabled || !recordEnabled) {
+      failNotificationEnable(gatt, 'set_characteristic_notification_failed', {
+        communicationEnabled,
+        recordEnabled
+      })
+      return
+    }
+  } catch (error) {
+    failNotificationEnable(gatt, 'set_characteristic_notification_exception', { error: `${error}` })
+    return
+  }
+
+  pendingNotifyDescriptors.push(communicationDescriptor)
+  pendingNotifyDescriptors.push(recordDescriptor)
+  pushDiagnostic('notify_enable_start', {
+    descriptorCount: pendingNotifyDescriptors.length,
+    generation: sessionGeneration
+  })
+  writeNextNotifyDescriptor(gatt)
+}
+
+function characteristicForChannel(channel: string): BluetoothGattCharacteristic | null {
+  if (channel == 'communication') {
+    return communicationWriteChar
+  }
+  if (channel == 'record') {
+    return recordWriteChar
+  }
+  return null
+}
+
+function processNextWrite(): void {
+  if (activeWriteRequest != null) {
+    return
+  }
+  const request = writeQueue.shift()
+  if (request == null) {
+    return
+  }
+  const gatt = connectedGatt
+  if (gatt == null || request.generation != sessionGeneration) {
+    request.reject(
+      makeError('stale_or_disconnected_write', 'BLE session 已失效，写入被拒绝', 'connection', true, {
+        requestGeneration: request.generation,
+        currentGeneration: sessionGeneration
+      })
+    )
+    processNextWrite()
+    return
+  }
+  const characteristic = characteristicForChannel(request.channel)
+  if (characteristic == null) {
+    request.reject(
+      makeError('write_channel_not_ready', 'BLE 写入通道未就绪', 'connection', true, {
+        channel: request.channel
+      })
+    )
+    processNextWrite()
+    return
+  }
+
+  activeWriteRequest = request
+  try {
+    request.gatt = gatt
+    request.characteristicUuid = characteristic.getUuid().toString().toLowerCase()
+    characteristic.setWriteType(
+      request.withoutResponse
+        ? BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        : BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+    )
+    characteristic.setValue(numbersToByteArray(request.value))
+    const started = gatt.writeCharacteristic(characteristic)
+    if (!started) {
+      activeWriteRequest = null
+      request.reject(
+        makeError('write_rejected', 'Android BLE 写入启动失败', 'connection', true, {
+          channel: request.channel
+        })
+      )
+      processNextWrite()
+      return
+    }
+
+    pushDiagnostic('characteristic_write_started', {
+      channel: request.channel,
+      uuid: request.characteristicUuid,
+      withoutResponse: request.withoutResponse,
+      generation: request.generation
+    })
+    writeTimeoutId = setTimeout(() => {
+      const timedOut = activeWriteRequest
+      activeWriteRequest = null
+      clearWriteTimeout()
+      if (timedOut != null) {
+        timedOut.reject(
+          makeError('write_timeout', 'Android BLE 写入回调超时', 'connection', true, {
+            channel: timedOut.channel,
+            generation: timedOut.generation,
+            timeoutMs: DEFAULT_WRITE_TIMEOUT_MS
+          })
+        )
+      }
+      processNextWrite()
+    }, DEFAULT_WRITE_TIMEOUT_MS)
+  } catch (error) {
+    activeWriteRequest = null
+    request.reject(
+      makeError('write_failed', 'Android BLE 写入异常', 'connection', true, {
+        channel: request.channel,
+        error: `${error}`
+      })
+    )
+    processNextWrite()
+  }
+}
+
+function writeByChannel(channel: string, value: Array<number>, withoutResponse: boolean = false): Promise<void> {
+  const initError = ensureInitialized()
+  if (initError != null) {
+    return rejectWith<void>(initError)
+  }
+  if (connectedGatt == null || connectedDeviceId == null) {
+    return rejectWith<void>(
+      makeError('device_not_connected', '尚未连接 Oleap 设备', 'connection', true)
+    )
+  }
+  if (characteristicForChannel(channel) == null) {
+    return rejectWith<void>(
+      makeError('write_channel_not_ready', 'BLE 写入通道未就绪', 'connection', true, { channel })
+    )
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    writeQueue.push({
+      channel,
+      value,
+      withoutResponse,
+      generation: sessionGeneration,
+      resolve,
+      reject
+    })
+    pushDiagnostic('write_queued', {
+      channel,
+      length: value.length,
+      withoutResponse,
+      queueDepth: writeQueue.length,
+      generation: sessionGeneration
+    })
+    processNextWrite()
+  })
+}
+
+function writeCommunicationBytes(value: Array<number>, withoutResponse: boolean = false): Promise<void> {
+  return writeByChannel('communication', value, withoutResponse)
+}
+
+function writeRecordBytes(value: Array<number>, withoutResponse: boolean = false): Promise<void> {
+  return writeByChannel('record', value, withoutResponse)
+}
+
 class OleapGattCallback extends BluetoothGattCallback {
-  override onConnectionStateChange(gatt: BluetoothGatt, status: number, newState: number): void {
+  generation: number
+
+  constructor(generation: number) {
+    super()
+    this.generation = generation
+  }
+
+  isCurrentGatt(gatt: BluetoothGatt, event: string): boolean {
+    if (this.generation != sessionGeneration || connectedGatt == null || gatt != connectedGatt) {
+      pushDiagnostic('stale_gatt_callback_ignored', {
+        event,
+        callbackGeneration: this.generation,
+        currentGeneration: sessionGeneration
+      })
+      return false
+    }
+    return true
+  }
+
+  @UTSJS.keepAlive
+  override onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int): void {
+    if (!this.isCurrentGatt(gatt, 'connection_state')) {
+      return
+    }
     const device = gatt.getDevice()
     const deviceId = device == null ? '' : deviceAddressOf(device)
     pushDiagnostic('gatt_connection_state', {
@@ -496,7 +840,11 @@ class OleapGattCallback extends BluetoothGattCallback {
     }
   }
 
-  override onServicesDiscovered(gatt: BluetoothGatt, status: number): void {
+  @UTSJS.keepAlive
+  override onServicesDiscovered(gatt: BluetoothGatt, status: Int): void {
+    if (!this.isCurrentGatt(gatt, 'services_discovered')) {
+      return
+    }
     pushDiagnostic('services_discovered', {
       status,
       serviceCount: gatt.getServices().size(),
@@ -525,19 +873,110 @@ class OleapGattCallback extends BluetoothGattCallback {
       return
     }
 
-    const device = gatt.getDevice()
-    connectedDeviceId = pendingDeviceId ?? (device == null ? '' : deviceAddressOf(device))
-    connectedDeviceName = pendingDeviceName ?? (device == null ? null : deviceNameOf(device))
-    const deviceInfo = {
-      deviceId: connectedDeviceId,
-      name: connectedDeviceName ?? 'Oleap Device',
-      rssi: 0,
-      manufacturerDataHex: ''
+    enableRequiredNotifications(gatt)
+  }
+
+  @UTSJS.keepAlive
+  override onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int): void {
+    if (!this.isCurrentGatt(gatt, 'descriptor_write')) {
+      return
     }
-    connecting = false
-    pushDiagnostic('channels_ready', channelReadySnapshot())
-    emitConnectionChanged(true, deviceInfo)
-    resolvePendingConnect(deviceInfo)
+    pushDiagnostic('descriptor_write', {
+      uuid: descriptor.getUuid().toString(),
+      status,
+      generation: sessionGeneration
+    })
+    if (
+      activeNotifyDescriptor == null ||
+      notifyEnableGeneration != this.generation ||
+      !sameUuid(descriptor.getUuid(), CLIENT_CHARACTERISTIC_CONFIG_UUID)
+    ) {
+      return
+    }
+    activeNotifyDescriptor = null
+    if (status != BluetoothGatt.GATT_SUCCESS) {
+      failNotificationEnable(gatt, 'notify_descriptor_write_failed_status', {
+        status,
+        uuid: descriptor.getUuid().toString()
+      })
+      return
+    }
+    writeNextNotifyDescriptor(gatt)
+  }
+
+  @UTSJS.keepAlive
+  override onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic): void {
+    if (!this.isCurrentGatt(gatt, 'characteristic_changed')) {
+      return
+    }
+    const bytes = byteArrayToNumbers(characteristic.value)
+    const generation = this.generation
+    if (sameUuid(characteristic.getUuid(), COMMUNICATION_NOTIFY_UUID)) {
+      handleCommunicationNotify(bytes, generation)
+      return
+    }
+    if (sameUuid(characteristic.getUuid(), RECORD_NOTIFY_UUID)) {
+      handleRecordNotify(bytes, generation)
+      return
+    }
+    pushDiagnostic('unknown_notify_ignored', {
+      uuid: characteristic.getUuid().toString(),
+      length: bytes.length,
+      generation
+    })
+  }
+
+  @UTSJS.keepAlive
+  override onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int): void {
+    const request = activeWriteRequest
+    if (request == null) {
+      pushDiagnostic('unexpected_characteristic_write', {
+        uuid: characteristic.getUuid().toString(),
+        status,
+        generation: sessionGeneration
+      })
+      return
+    }
+    if (
+      !this.isCurrentGatt(gatt, 'characteristic_write') ||
+      request.gatt != gatt ||
+      request.characteristicUuid != characteristic.getUuid().toString().toLowerCase()
+    ) {
+      pushDiagnostic('stale_characteristic_write_ignored', {
+        uuid: characteristic.getUuid().toString(),
+        status,
+        requestGeneration: request.generation,
+        callbackGeneration: this.generation,
+        currentGeneration: sessionGeneration
+      })
+      return
+    }
+    clearWriteTimeout()
+    activeWriteRequest = null
+    pushDiagnostic('characteristic_write', {
+      channel: request.channel,
+      uuid: characteristic.getUuid().toString(),
+      status,
+      generation: this.generation
+    })
+    if (request.generation != sessionGeneration) {
+      request.reject(
+        makeError('stale_write_result', '旧 BLE session 的写入结果已忽略', 'connection', true, {
+          requestGeneration: request.generation,
+          currentGeneration: sessionGeneration
+        })
+      )
+    } else if (status == BluetoothGatt.GATT_SUCCESS) {
+      request.resolve()
+    } else {
+      request.reject(
+        makeError('write_failed_status', 'Android BLE 写入失败', 'connection', true, {
+          channel: request.channel,
+          status
+        })
+      )
+    }
+    processNextWrite()
   }
 }
 
@@ -745,7 +1184,7 @@ export function connect(options: any): Promise<any> {
 
     try {
       const remoteDevice = adapter.getRemoteDevice(`${options.deviceId}`)
-      const callback = new OleapGattCallback()
+      const callback = new OleapGattCallback(generationAtStart)
       gattCallback = callback
       connectedGatt = remoteDevice.connectGatt(context, false, callback)
       pushDiagnostic('connect_start', {

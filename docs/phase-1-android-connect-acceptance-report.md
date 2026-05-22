@@ -21,10 +21,9 @@
 - `disconnect()` 关闭 GATT、清理 characteristic cache、递增 generation。
 - 连接成功只在必需 characteristic 全部发现后 resolve。
 
-未实现：
+当时未实现，后续报告补齐或继续推进：
 
-- Notify 订阅。
-- Write queue。
+- Notify 订阅和 Write queue 已在 `phase-1-android-notify-write-acceptance-report.md` 补齐。
 - 控制协议事务。
 - 录音协议和 OPUS 解码。
 - iOS BLE Host。
@@ -58,7 +57,7 @@ Phase 0 check passed
 - `connect()` 不在 GATT connected 时提前 resolve，必须等服务发现和 characteristic cache 完成。
 - 连接中的设备使用 `pendingDeviceId`，避免 `getConnectionState()` 在服务发现前误报 connected。
 - 断开和连接失败都会清理 GATT、pending timer 和 characteristic cache。
-- 当前阶段没有实现 notify 订阅，避免 P1-5 的写/通知队列提前混入。
+- Notify 订阅和写队列已作为独立 P1-5/P1-6 步骤验收，避免连接发现步骤职责过大。
 - 控制协议 API 仍返回 `control_not_ready`，边界清晰。
 
 ## 待真机验证
@@ -74,5 +73,4 @@ Phase 0 check passed
 
 下一步：
 
-- `P1-5`：Notify 订阅和 write queue。
-- `P1-6`：进一步验证 generation 和资源释放。
+- `P2`：控制协议 frame/DP/transaction。

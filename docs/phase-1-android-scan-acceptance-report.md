@@ -18,11 +18,11 @@
 - `onDeviceFound` 事件订阅和取消订阅。
 - 扫描错误和诊断日志。
 
-未实现：
+当时未实现，后续报告补齐或继续推进：
 
-- Android GATT 连接。
-- Service/Characteristic 发现。
-- Notify 订阅。
+- Android GATT 连接已在 `phase-1-android-connect-acceptance-report.md` 补齐。
+- Service/Characteristic 发现已在 `phase-1-android-connect-acceptance-report.md` 补齐。
+- Notify 订阅已在 `phase-1-android-notify-write-acceptance-report.md` 补齐。
 - 控制协议事务。
 - 录音协议和 OPUS 解码。
 
@@ -71,5 +71,4 @@ Phase 0 check passed
 
 下一步：
 
-- `P1-3`：Android GATT 连接和断开。
-- `P1-4`：服务发现和 characteristic cache。
+- `P2`：控制协议 frame/DP/transaction。

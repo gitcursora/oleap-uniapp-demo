@@ -62,6 +62,14 @@ npm run check:p1-android
 - 必需 service/characteristic UUID。
 - characteristic cache。
 - channel ready snapshot。
+- communication/record notify CCCD 订阅。
+- `onDescriptorWrite` 串行推进。
+- communication/record notify 回调入口。
+- communication/record 写队列。
+- `ByteArray` 写入转换。
+- 写入回调超时。
+- 断开时取消 pending write。
+- generation 防护，旧 GATT callback 不得推进新连接。
 - 断开时清理 GATT 和 characteristic cache。
 
 ## Phase 2
