@@ -1,5 +1,4 @@
 {
   "deploymentTarget": "13.0",
-  "note": "Phase 0 skeleton. CoreBluetooth and libopus bridge are implemented in later phases."
+  "note": "P5 iOS host/control slice. Realtime recording, Flash download, and libopus bridge are implemented in later P5 slices."
 }
-

@@ -179,3 +179,42 @@ npm run check:p4-flash
 - 手动停止下载后设备侧传输停止。
 - 下载后 WAV/MP3 可播放。
 - 队首删除成功、非队首删除拒绝。
+
+## Phase 5
+
+iOS native：
+
+- iOS CoreBluetooth 初始化。
+- iOS 扫描 Oleap 设备。
+- iOS 连接、服务发现、characteristic cache。
+- iOS communication/record notify 订阅。
+- iOS communication/record write bridge。
+- iOS 控制协议：电量、SN、EQ、版本等查询与 EQ 写入。
+- iOS 录音和 Flash 文件输出。
+
+当前静态与 fixture 验收：
+
+```sh
+npm run check:p5-ios
+```
+
+覆盖：
+
+- iOS unsupported stub 已移除。
+- `CBCentralManagerDelegate` / `CBPeripheralDelegate` native host 存在。
+- iOS 扫描、连接、断开、服务发现、特征发现、notify 订阅和写入入口存在。
+- communication notify 分发到控制协议解析。
+- iOS 控制协议 codec、transaction queue、主动上报 ACK、超时重试存在。
+- iOS 电量、SN、设备名、版本、EQ、录音状态、Flash 容量、同步时间 API 接入控制协议。
+- iOS 蓝牙权限文案存在。
+- iOS 录音和 Flash 当前明确返回 `ios_recording_not_ready` / `ios_flash_not_ready`，不伪装成功。
+- 控制协议 fixture 在 iOS P5 检查中复用，保证 DP frame 口径一致。
+
+待真机补齐：
+
+- Android 之外的 HBuilderX iOS/UTS 编译验证。
+- iOS 真机扫描、连接、notify/write 稳定性。
+- iOS 电量/SN/EQ 查询和主动上报 ACK。
+- iOS OPUS decoder/WAV writer。
+- iOS 实时录音 WAV 可播放。
+- iOS Flash 下载 WAV/MP3 可播放。

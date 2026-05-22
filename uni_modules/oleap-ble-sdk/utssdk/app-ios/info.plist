@@ -4,6 +4,7 @@
 <dict>
   <key>NSBluetoothAlwaysUsageDescription</key>
   <string>用于连接 Oleap 耳机并接收录音数据</string>
+  <key>NSBluetoothPeripheralUsageDescription</key>
+  <string>用于连接 Oleap 耳机并接收录音数据</string>
 </dict>
 </plist>
-

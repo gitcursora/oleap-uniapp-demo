@@ -1,6 +1,6 @@
 # Oleap UniApp BLE SDK API
 
-状态：Phase 0 API 契约稳定；Android UTS 已接入扫描、连接、notify/write transport、控制协议、实时录音 OPUS 落盘、Flash 离线文件下载和 WAV/MP3 finalize。iOS 原生实现待后续 Phase 接入。
+状态：Phase 0 API 契约稳定；Android UTS 已接入扫描、连接、notify/write transport、控制协议、实时录音 OPUS 落盘、Flash 离线文件下载和 WAV/MP3 finalize。iOS UTS 已接入 CoreBluetooth host/control 第一切片，iOS 录音与 Flash 文件输出待后续 P5 切片。
 
 ## 导入
 
@@ -61,7 +61,7 @@ const result = await OleapBle.stopRecording({
 })
 ```
 
-`scene` 当前可传 `meeting`、`call`、`media`、`ambient`；`format` 当前支持 `wav` 和 `mp3`。Android native 当前已能完成 start/stop、OPUS 帧切分、临时文件落盘和 WAV/MP3 输出。当前 Android decoder 使用 `*.oleapframes` 作为输入，要求帧布局为 `4B header + 80B OPUS payload`、单声道、16kHz；不满足时会明确返回 `opus_decoder_frame_layout_unsupported` 或 `opus_decoder_channels_unsupported`。
+`scene` 当前可传 `meeting`、`call`、`media`、`ambient`；`format` 当前支持 `wav` 和 `mp3`。Android native 当前已能完成 start/stop、OPUS 帧切分、临时文件落盘和 WAV/MP3 输出。当前 Android decoder 使用 `*.oleapframes` 作为输入，要求帧布局为 `4B header + 80B OPUS payload`、单声道、16kHz；不满足时会明确返回 `opus_decoder_frame_layout_unsupported` 或 `opus_decoder_channels_unsupported`。iOS native 当前第一切片只支持连接和控制协议；录音 API 会明确返回 `ios_recording_not_ready`，不会伪装成功。
 
 返回：
 
@@ -96,7 +96,7 @@ const result = await OleapBle.downloadFlashRecording({
 await OleapBle.stopFlashDownload()
 ```
 
-Android native 当前已能查询文件数量、读取文件信息、连续下载 OPUS chunk、停止传输、输出 WAV/MP3，并可在 `deleteAfterSuccess=true` 时安全删除队首文件。SDK 会先确认目标 `fileId` 是设备当前队首；非队首删除返回 `flash_delete_order_violation`。
+Android native 当前已能查询文件数量、读取文件信息、连续下载 OPUS chunk、停止传输、输出 WAV/MP3，并可在 `deleteAfterSuccess=true` 时安全删除队首文件。SDK 会先确认目标 `fileId` 是设备当前队首；非队首删除返回 `flash_delete_order_violation`。iOS native 当前第一切片只支持连接和控制协议；Flash API 会明确返回 `ios_flash_not_ready`。
 
 返回：
 
