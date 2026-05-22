@@ -54,7 +54,15 @@ npm run check:p1-android
 - 扫描超时和清理。
 - `onDeviceFound` 订阅和取消订阅。
 - `getDiagnostics`。
-- `connect_not_implemented` 明确标记 P1-3 边界。
+- Android GATT 连接入口。
+- 连接超时。
+- `BluetoothGattCallback`。
+- `onConnectionStateChange`。
+- `onServicesDiscovered`。
+- 必需 service/characteristic UUID。
+- characteristic cache。
+- channel ready snapshot。
+- 断开时清理 GATT 和 characteristic cache。
 
 ## Phase 2
 

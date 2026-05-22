@@ -35,7 +35,7 @@ npm run check:p1-android
 结果：
 
 ```text
-P1 Android scan check passed
+P1 Android host check passed
 ```
 
 同时回归：

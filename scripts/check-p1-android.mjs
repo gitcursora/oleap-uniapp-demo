@@ -15,6 +15,10 @@ if (!existsSync(resolve(root, 'docs/phase-1-android-scan-acceptance-report.md'))
   fail('Missing Phase 1 Android scan acceptance report')
 }
 
+if (!existsSync(resolve(root, 'docs/phase-1-android-connect-acceptance-report.md'))) {
+  fail('Missing Phase 1 Android connect acceptance report')
+}
+
 function fail(message) {
   throw new Error(message)
 }
@@ -33,7 +37,12 @@ function mustMatch(source, pattern, label) {
 
 const requiredAndroidImports = [
   'android.bluetooth.BluetoothAdapter',
+  'android.bluetooth.BluetoothGatt',
+  'android.bluetooth.BluetoothGattCallback',
+  'android.bluetooth.BluetoothGattCharacteristic',
+  'android.bluetooth.BluetoothGattService',
   'android.bluetooth.BluetoothManager',
+  'android.bluetooth.BluetoothProfile',
   'android.bluetooth.le.ScanCallback',
   'android.bluetooth.le.ScanResult',
   'android.bluetooth.le.ScanSettings',
@@ -71,13 +80,50 @@ mustContain(androidIndex, 'clearTimeout', 'scan timeout cleanup')
 mustContain(androidIndex, 'onDeviceFound', 'device found subscription')
 mustContain(androidIndex, 'deviceFoundCallbacks.delete(callback)', 'device found unsubscribe')
 mustContain(androidIndex, 'getDiagnostics', 'diagnostics export')
-mustContain(androidIndex, 'connect_not_implemented', 'explicit P1-3 boundary')
 mustMatch(androidIndex, /class\s+OleapScanCallback\s+extends\s+ScanCallback/, 'ScanCallback subclass')
 mustMatch(androidIndex, /override\s+onScanResult/, 'onScanResult override')
 mustMatch(androidIndex, /override\s+onScanFailed/, 'onScanFailed override')
+
+const requiredGattStrings = [
+  'COMMUNICATION_SERVICE_UUID',
+  'COMMUNICATION_NOTIFY_UUID',
+  'COMMUNICATION_WRITE_UUID',
+  'RECORD_SERVICE_UUID',
+  'RECORD_NOTIFY_UUID',
+  'RECORD_WRITE_UUID',
+  'BluetoothProfile.STATE_CONNECTED',
+  'BluetoothProfile.STATE_DISCONNECTED',
+  'BluetoothGatt.GATT_SUCCESS',
+  'connectGatt(context, false, callback)',
+  'discoverServices()',
+  'discoveryStarted',
+  'onServicesDiscovered',
+  'cacheRequiredCharacteristics',
+  'channelReadySnapshot',
+  'required_characteristic_missing',
+  'connect_timeout',
+  'already_connecting',
+  'pendingDeviceId',
+  'clearCharacteristicCache',
+  'gatt.close()',
+  'emitConnectionChanged(true',
+  'emitConnectionChanged(false'
+]
+
+for (const text of requiredGattStrings) {
+  mustContain(androidIndex, text, 'GATT connection/service-discovery boundary')
+}
+
+mustMatch(androidIndex, /class\s+OleapGattCallback\s+extends\s+BluetoothGattCallback/, 'BluetoothGattCallback subclass')
+mustMatch(androidIndex, /override\s+onConnectionStateChange/, 'onConnectionStateChange override')
+mustMatch(androidIndex, /override\s+onServicesDiscovered/, 'onServicesDiscovered override')
 
 if (androidIndex.includes('unsupportedPlatformError')) {
   fail('Android P1 implementation must not use unsupportedPlatformError')
 }
 
-console.log('P1 Android scan check passed')
+if (androidIndex.includes('connect_not_implemented')) {
+  fail('Android P1-3/P1-4 should implement connect instead of connect_not_implemented')
+}
+
+console.log('P1 Android host check passed')

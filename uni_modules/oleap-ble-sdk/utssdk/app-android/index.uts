@@ -1,11 +1,17 @@
 import BluetoothAdapter from 'android.bluetooth.BluetoothAdapter'
 import BluetoothDevice from 'android.bluetooth.BluetoothDevice'
+import BluetoothGatt from 'android.bluetooth.BluetoothGatt'
+import BluetoothGattCallback from 'android.bluetooth.BluetoothGattCallback'
+import BluetoothGattCharacteristic from 'android.bluetooth.BluetoothGattCharacteristic'
+import BluetoothGattService from 'android.bluetooth.BluetoothGattService'
 import BluetoothManager from 'android.bluetooth.BluetoothManager'
+import BluetoothProfile from 'android.bluetooth.BluetoothProfile'
 import ScanCallback from 'android.bluetooth.le.ScanCallback'
 import ScanResult from 'android.bluetooth.le.ScanResult'
 import ScanSettings from 'android.bluetooth.le.ScanSettings'
 import Context from 'android.content.Context'
 import Build from 'android.os.Build'
+import UUID from 'java.util.UUID'
 import { OleapBleNativeError } from '../unierror.uts'
 
 type NativeDeviceFoundCallback = (device: any) => void
@@ -14,16 +20,38 @@ type NativeDpCallback = (event: any) => void
 type NativeProgressCallback = (event: any) => void
 type NativeErrorCallback = (event: any) => void
 
-const SDK_VERSION = '0.1.0-p1-android-scan'
+const SDK_VERSION = '0.1.0-p1-android-connect'
 const OLEAP_NAME_PREFIX = 'Oleap'
 const DIAGNOSTIC_LIMIT = 500
 const DEFAULT_SCAN_TIMEOUT_MS = 8000
+const DEFAULT_CONNECT_TIMEOUT_MS = 15000
+
+const COMMUNICATION_SERVICE_UUID = '00002001-0000-1000-8000-00805f9b34fb'
+const COMMUNICATION_NOTIFY_UUID = '0000c92a-0000-1000-8000-00805f9b34fb'
+const COMMUNICATION_WRITE_UUID = '0000ca2a-0000-1000-8000-00805f9b34fb'
+const RECORD_SERVICE_UUID = '65786365-6c70-6f69-6e74-2e636f820000'
+const RECORD_NOTIFY_UUID = '65786365-6c70-6f69-6e74-2e636f820003'
+const RECORD_WRITE_UUID = '65786365-6c70-6f69-6e74-2e636f820004'
 
 let initialized = false
 let scanning = false
 let scannerCallback: OleapScanCallback | null = null
 let scanTimeoutId: number | null = null
+let connectTimeoutId: number | null = null
+let connectedGatt: BluetoothGatt | null = null
+let gattCallback: OleapGattCallback | null = null
+let connecting = false
+let pendingDeviceId: string | null = null
+let pendingDeviceName: string | null = null
 let connectedDeviceId: string | null = null
+let connectedDeviceName: string | null = null
+let sessionGeneration = 0
+let communicationWriteChar: BluetoothGattCharacteristic | null = null
+let communicationNotifyChar: BluetoothGattCharacteristic | null = null
+let recordWriteChar: BluetoothGattCharacteristic | null = null
+let recordNotifyChar: BluetoothGattCharacteristic | null = null
+let pendingConnectResolve: ((device: any) => void) | null = null
+let pendingConnectReject: ((error: OleapBleNativeError) => void) | null = null
 
 const deviceFoundCallbacks = new Set<NativeDeviceFoundCallback>()
 const connectionCallbacks = new Set<NativeConnectionCallback>()
@@ -70,6 +98,35 @@ function emitError(error: OleapBleNativeError): void {
 function rejectWith<T>(error: OleapBleNativeError): Promise<T> {
   emitError(error)
   return Promise.reject<T>(error)
+}
+
+function resolvePendingConnect(device: any): void {
+  if (connectTimeoutId != null) {
+    clearTimeout(connectTimeoutId!)
+    connectTimeoutId = null
+  }
+  connecting = false
+  const resolve = pendingConnectResolve
+  pendingConnectResolve = null
+  pendingConnectReject = null
+  if (resolve != null) {
+    resolve(device)
+  }
+}
+
+function rejectPendingConnect(error: OleapBleNativeError): void {
+  if (connectTimeoutId != null) {
+    clearTimeout(connectTimeoutId!)
+    connectTimeoutId = null
+  }
+  connecting = false
+  const reject = pendingConnectReject
+  pendingConnectResolve = null
+  pendingConnectReject = null
+  emitError(error)
+  if (reject != null) {
+    reject(error)
+  }
 }
 
 function getContext(): Context | null {
@@ -277,6 +334,213 @@ function notImplemented<T>(code: string, message: string, area: string): Promise
   return rejectWith<T>(makeError(code, message, area, true))
 }
 
+function clearCharacteristicCache(): void {
+  communicationWriteChar = null
+  communicationNotifyChar = null
+  recordWriteChar = null
+  recordNotifyChar = null
+}
+
+function closeGatt(recordDiagnostic: boolean = true): void {
+  if (connectTimeoutId != null) {
+    clearTimeout(connectTimeoutId!)
+    connectTimeoutId = null
+  }
+  const gatt = connectedGatt
+  connectedGatt = null
+  gattCallback = null
+  pendingDeviceId = null
+  pendingDeviceName = null
+  connectedDeviceId = null
+  connectedDeviceName = null
+  connecting = false
+  clearCharacteristicCache()
+  sessionGeneration += 1
+  if (gatt != null) {
+    try {
+      gatt.disconnect()
+    } catch (_error) {}
+    try {
+      gatt.close()
+    } catch (_error) {}
+  }
+  if (recordDiagnostic) {
+    pushDiagnostic('gatt_closed', {
+      generation: sessionGeneration
+    })
+  }
+}
+
+function sameUuid(actual: UUID | null, expected: string): boolean {
+  if (actual == null) {
+    return false
+  }
+  return actual.toString().toLowerCase() == expected.toLowerCase()
+}
+
+function findService(gatt: BluetoothGatt, serviceUuid: string): BluetoothGattService | null {
+  const services = gatt.getServices()
+  for (let i = 0; i < services.size(); i++) {
+    const service = services.get(i)
+    if (sameUuid(service.getUuid(), serviceUuid)) {
+      return service
+    }
+  }
+  return null
+}
+
+function findCharacteristic(service: BluetoothGattService | null, characteristicUuid: string): BluetoothGattCharacteristic | null {
+  if (service == null) {
+    return null
+  }
+  const characteristics = service.getCharacteristics()
+  for (let i = 0; i < characteristics.size(); i++) {
+    const characteristic = characteristics.get(i)
+    if (sameUuid(characteristic.getUuid(), characteristicUuid)) {
+      return characteristic
+    }
+  }
+  return null
+}
+
+function cacheRequiredCharacteristics(gatt: BluetoothGatt): boolean {
+  clearCharacteristicCache()
+  const communicationService = findService(gatt, COMMUNICATION_SERVICE_UUID)
+  const recordService = findService(gatt, RECORD_SERVICE_UUID)
+  communicationWriteChar = findCharacteristic(communicationService, COMMUNICATION_WRITE_UUID)
+  communicationNotifyChar = findCharacteristic(communicationService, COMMUNICATION_NOTIFY_UUID)
+  recordWriteChar = findCharacteristic(recordService, RECORD_WRITE_UUID)
+  recordNotifyChar = findCharacteristic(recordService, RECORD_NOTIFY_UUID)
+  return communicationWriteChar != null &&
+    communicationNotifyChar != null &&
+    recordWriteChar != null &&
+    recordNotifyChar != null
+}
+
+function channelReadySnapshot(): any {
+  return {
+    communicationReady: communicationWriteChar != null && communicationNotifyChar != null,
+    recordReady: recordWriteChar != null && recordNotifyChar != null
+  }
+}
+
+function emitConnectionChanged(connected: boolean, device: any | null = null): void {
+  const event = {
+    connected,
+    device,
+    generation: sessionGeneration,
+    channels: channelReadySnapshot()
+  }
+  connectionCallbacks.forEach((callback) => {
+    callback(event)
+  })
+}
+
+class OleapGattCallback extends BluetoothGattCallback {
+  override onConnectionStateChange(gatt: BluetoothGatt, status: number, newState: number): void {
+    const device = gatt.getDevice()
+    const deviceId = device == null ? '' : deviceAddressOf(device)
+    pushDiagnostic('gatt_connection_state', {
+      status,
+      newState,
+      deviceId,
+      generation: sessionGeneration
+    })
+
+    if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
+      connectedGatt = gatt
+      pendingDeviceId = deviceId
+      pendingDeviceName = device == null ? null : deviceNameOf(device)
+      try {
+        const discoveryStarted = gatt.discoverServices()
+        if (!discoveryStarted) {
+          const connectError = makeError(
+            'discover_services_start_failed',
+            '启动服务发现失败',
+            'connection',
+            true,
+            { deviceId }
+          )
+          closeGatt(true)
+          rejectPendingConnect(connectError)
+        }
+      } catch (error) {
+        const connectError = makeError(
+          'discover_services_start_failed',
+          '启动服务发现失败',
+          'connection',
+          true,
+          { error: `${error}` }
+        )
+        closeGatt(true)
+        rejectPendingConnect(connectError)
+      }
+      return
+    }
+
+    if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+      const wasConnecting = connecting
+      closeGatt(true)
+      emitConnectionChanged(false, null)
+      if (wasConnecting) {
+        rejectPendingConnect(
+          makeError(
+            status == BluetoothGatt.GATT_SUCCESS ? 'connect_disconnected' : 'connect_gatt_failed',
+            'Android GATT 连接断开',
+            'connection',
+            true,
+            { status, deviceId }
+          )
+        )
+      }
+    }
+  }
+
+  override onServicesDiscovered(gatt: BluetoothGatt, status: number): void {
+    pushDiagnostic('services_discovered', {
+      status,
+      serviceCount: gatt.getServices().size(),
+      generation: sessionGeneration
+    })
+    if (status != BluetoothGatt.GATT_SUCCESS) {
+      closeGatt(true)
+      rejectPendingConnect(
+        makeError('discover_services_failed', 'Android GATT 服务发现失败', 'connection', true, { status })
+      )
+      return
+    }
+
+    if (!cacheRequiredCharacteristics(gatt)) {
+      const snapshot = channelReadySnapshot()
+      closeGatt(true)
+      rejectPendingConnect(
+        makeError(
+          'required_characteristic_missing',
+          '未发现 Oleap 必需的通信或录音特征',
+          'connection',
+          true,
+          snapshot
+        )
+      )
+      return
+    }
+
+    const device = gatt.getDevice()
+    connectedDeviceId = pendingDeviceId ?? (device == null ? '' : deviceAddressOf(device))
+    connectedDeviceName = pendingDeviceName ?? (device == null ? null : deviceNameOf(device))
+    const deviceInfo = {
+      deviceId: connectedDeviceId,
+      name: connectedDeviceName ?? 'Oleap Device',
+      rssi: 0,
+      manufacturerDataHex: ''
+    }
+    connecting = false
+    pushDiagnostic('channels_ready', channelReadySnapshot())
+    emitConnectionChanged(true, deviceInfo)
+    resolvePendingConnect(deviceInfo)
+  }
+}
+
 export function init(options: any | null = null): Promise<void> {
   initialized = true
   pushDiagnostic('sdk_init', {
@@ -411,23 +675,119 @@ export function stopScan(): Promise<void> {
 }
 
 export function connect(options: any): Promise<any> {
-  return notImplemented<any>('connect_not_implemented', 'Android GATT 连接将在 P1-3 实现', 'connection')
+  const initError = ensureInitialized()
+  if (initError != null) {
+    return rejectWith<any>(initError)
+  }
+  if (!hasRequiredPermissions()) {
+    return rejectWith<any>(
+      makeError('permission_denied', '请先授予蓝牙连接权限', 'permission', true)
+    )
+  }
+  if (connecting) {
+    return rejectWith<any>(
+      makeError('already_connecting', '已有连接流程正在进行', 'connection', true)
+    )
+  }
+  const adapter = getBluetoothAdapter()
+  if (adapter == null) {
+    return rejectWith<any>(
+      makeError('bluetooth_unsupported', '当前设备不支持蓝牙', 'bluetooth', false)
+    )
+  }
+  if (!adapter.isEnabled()) {
+    return rejectWith<any>(
+      makeError('bluetooth_off', '系统蓝牙未开启', 'bluetooth', true)
+    )
+  }
+  if (options == null || options.deviceId == null || `${options.deviceId}`.length == 0) {
+    return rejectWith<any>(
+      makeError('device_id_required', 'connect 需要传入 deviceId', 'connection', false)
+    )
+  }
+  const context = getContext()
+  if (context == null) {
+    return rejectWith<any>(
+      makeError('context_missing', '无法获取应用 Context', 'connection', true)
+    )
+  }
+
+  stopScanInternal(false)
+  closeGatt(false)
+  clearCharacteristicCache()
+  const generationAtStart = sessionGeneration
+  connecting = true
+  pendingDeviceId = `${options.deviceId}`
+  pendingDeviceName = options.name == null ? null : `${options.name}`
+
+  return new Promise<any>((resolve, reject) => {
+    pendingConnectResolve = resolve
+    pendingConnectReject = reject
+    const timeoutMs = options.timeoutMs != null && Number(options.timeoutMs) > 0
+      ? Number(options.timeoutMs)
+      : DEFAULT_CONNECT_TIMEOUT_MS
+    connectTimeoutId = setTimeout(() => {
+      const error = makeError(
+        'connect_timeout',
+        'Android GATT 连接超时',
+        'connection',
+        true,
+        {
+          deviceId: connectedDeviceId,
+          pendingDeviceId,
+          timeoutMs,
+          generation: generationAtStart
+        }
+      )
+      closeGatt(true)
+      rejectPendingConnect(error)
+    }, timeoutMs)
+
+    try {
+      const remoteDevice = adapter.getRemoteDevice(`${options.deviceId}`)
+      const callback = new OleapGattCallback()
+      gattCallback = callback
+      connectedGatt = remoteDevice.connectGatt(context, false, callback)
+      pushDiagnostic('connect_start', {
+        deviceId: options.deviceId,
+        timeoutMs,
+        generation: generationAtStart
+      })
+    } catch (error) {
+      const connectError = makeError(
+        'connect_start_failed',
+        '启动 Android GATT 连接失败',
+        'connection',
+        true,
+        { error: `${error}`, deviceId: options.deviceId }
+      )
+      closeGatt(true)
+      rejectPendingConnect(connectError)
+    }
+  })
 }
 
 export function disconnect(): Promise<void> {
   stopScanInternal(true)
-  connectedDeviceId = null
-  connectionCallbacks.forEach((callback) => {
-    callback({ connected: false, device: null })
-  })
-  pushDiagnostic('disconnect_placeholder')
+  closeGatt(true)
+  emitConnectionChanged(false, null)
   return Promise.resolve()
 }
 
 export function getConnectionState(): any {
   return {
     connected: connectedDeviceId != null,
-    device: null
+    connecting,
+    device: connectedDeviceId == null
+      ? null
+      : {
+          deviceId: connectedDeviceId,
+          name: connectedDeviceName ?? 'Oleap Device',
+          rssi: 0,
+          manufacturerDataHex: ''
+        },
+    generation: sessionGeneration,
+    channels: channelReadySnapshot()
   }
 }
 
@@ -539,6 +899,9 @@ export function getDiagnostics(): any {
     platform: 'android',
     scanning,
     connected: connectedDeviceId != null,
+    connecting,
+    generation: sessionGeneration,
+    channels: channelReadySnapshot(),
     events: diagnostics.slice()
   }
 }
