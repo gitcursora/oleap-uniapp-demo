@@ -84,6 +84,22 @@ npm run check:p1-android
 - 主动上报 ACK。
 - 超时和重试。
 
+当前静态与 fixture 验收：
+
+```sh
+npm run check:p2-control
+```
+
+覆盖：
+
+- Android 控制协议占位已移除。
+- 控制帧、Payload、DP TLV 编解码入口存在。
+- control transaction queue 存在。
+- communication notify 分发到控制协议解析。
+- 主动上报 ACK 路径存在。
+- 电量、SN、EQ、版本等 API 使用 `queryDp/writeDp`。
+- control fixture CRC、CMD 和 DP TLV 可解析。
+
 ## Phase 3
 
 实时录音：

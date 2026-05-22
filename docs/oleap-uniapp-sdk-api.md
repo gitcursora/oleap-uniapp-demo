@@ -1,6 +1,6 @@
 # Oleap UniApp BLE SDK API
 
-状态：Phase 0 API 契约，mock facade 已实现，原生 UTS 实现待后续 Phase 接入。
+状态：Phase 0 API 契约稳定；Android UTS 已接入扫描、连接、notify/write transport 和控制协议。录音、Flash、iOS 原生实现待后续 Phase 接入。
 
 ## 导入
 
@@ -113,4 +113,3 @@ OleapBle.clearDiagnostics()
 ```
 
 诊断不记录音频 payload。
-

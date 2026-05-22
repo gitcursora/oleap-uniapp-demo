@@ -21,12 +21,14 @@ type NativeDpCallback = (event: any) => void
 type NativeProgressCallback = (event: any) => void
 type NativeErrorCallback = (event: any) => void
 
-const SDK_VERSION = '0.1.0-p1-android-transport'
+const SDK_VERSION = '0.1.0-p2-control'
 const OLEAP_NAME_PREFIX = 'Oleap'
 const DIAGNOSTIC_LIMIT = 500
 const DEFAULT_SCAN_TIMEOUT_MS = 8000
 const DEFAULT_CONNECT_TIMEOUT_MS = 15000
 const DEFAULT_WRITE_TIMEOUT_MS = 8000
+const DEFAULT_CONTROL_TIMEOUT_MS = 3000
+const CONTROL_MAX_ATTEMPTS = 3
 
 const COMMUNICATION_SERVICE_UUID = '00002001-0000-1000-8000-00805f9b34fb'
 const COMMUNICATION_NOTIFY_UUID = '0000c92a-0000-1000-8000-00805f9b34fb'
@@ -35,6 +37,37 @@ const RECORD_SERVICE_UUID = '65786365-6c70-6f69-6e74-2e636f820000'
 const RECORD_NOTIFY_UUID = '65786365-6c70-6f69-6e74-2e636f820003'
 const RECORD_WRITE_UUID = '65786365-6c70-6f69-6e74-2e636f820004'
 const CLIENT_CHARACTERISTIC_CONFIG_UUID = '00002902-0000-1000-8000-00805f9b34fb'
+
+const CONTROL_SYNC_FIRST = 0x99
+const CONTROL_SYNC_SECOND = 0xec
+const CONTROL_MESSAGE_TYPE = 0xb2
+const CONTROL_FRAME_HEADER_LENGTH = 7
+const CONTROL_CRC_LENGTH = 4
+const CONTROL_DESC_REQUEST = 0x022a
+const CONTROL_DESC_ACK = 0x003a
+const CONTROL_DESC_CRC_MASK = 0x0008
+const CONTROL_DESC_ERROR_MASK = 0x0100
+const CONTROL_CMD_DP_QUERY = 0x10
+const CONTROL_CMD_DP_SEND = 0x11
+const CONTROL_CMD_DP_WRITE = 0x12
+const CONTROL_PAYLOAD_HEADER_LENGTH = 9
+const CONTROL_DP_SEQUENCE_LENGTH = 4
+
+const DP_TYPE_RAW = 0
+const DP_TYPE_BOOL = 1
+const DP_TYPE_NUMBER = 2
+const DP_TYPE_STRING = 3
+const DP_TYPE_ENUM = 4
+const DP_ID_BATTERY = 0x03
+const DP_ID_DEVICE_NAME = 0x66
+const DP_ID_FIRMWARE_VERSION = 0x67
+const DP_ID_HARDWARE_VERSION = 0x71
+const DP_ID_RECORD_STATE = 0x7c
+const DP_ID_APP_TIME = 0x7e
+const DP_ID_FLASH_CAPACITY = 0x7f
+const DP_ID_SN = 0x80
+const DP_ID_EQ_MODE = 0x81
+const FLASH_BLOCK_BYTES = 32 * 1024
 
 let initialized = false
 let scanning = false
@@ -60,6 +93,11 @@ const pendingNotifyDescriptors = new Array<BluetoothGattDescriptor>()
 let activeWriteRequest: any | null = null
 const writeQueue = new Array<any>()
 let writeTimeoutId: number | null = null
+let controlSendSn = 0
+let controlAppDpSn = 0
+let activeControlTransaction: any | null = null
+const controlTransactionQueue = new Array<any>()
+let controlTimeoutId: number | null = null
 let pendingConnectResolve: ((device: any) => void) | null = null
 let pendingConnectReject: ((error: OleapBleNativeError) => void) | null = null
 
@@ -71,6 +109,7 @@ const decodeProgressCallbacks = new Set<NativeProgressCallback>()
 const errorCallbacks = new Set<NativeErrorCallback>()
 const diagnostics = new Array<any>()
 const discoveredDeviceIds = new Set<string>()
+const dpSnapshot = new Map<number, any>()
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -159,6 +198,46 @@ function rejectQueuedWrites(error: OleapBleNativeError): void {
       request.reject(error)
     }
   }
+}
+
+function clearControlTimeout(): void {
+  if (controlTimeoutId != null) {
+    clearTimeout(controlTimeoutId!)
+    controlTimeoutId = null
+  }
+}
+
+function rejectControlRequest(request: any, error: OleapBleNativeError, emit: boolean = true): void {
+  if (request == null || request.completed == true) {
+    return
+  }
+  request.completed = true
+  if (emit) {
+    emitError(error)
+  }
+  if (request.reject != null) {
+    request.reject(error)
+  }
+}
+
+function resetControlProtocol(reason: string): void {
+  clearControlTimeout()
+  const error = makeError(
+    'control_disconnected',
+    reason,
+    'control',
+    true,
+    { generation: sessionGeneration }
+  )
+  const active = activeControlTransaction
+  activeControlTransaction = null
+  rejectControlRequest(active, error, false)
+  while (controlTransactionQueue.length > 0) {
+    rejectControlRequest(controlTransactionQueue.shift(), error, false)
+  }
+  controlSendSn = 0
+  controlAppDpSn = 0
+  dpSnapshot.clear()
 }
 
 function getContext(): Context | null {
@@ -398,6 +477,7 @@ function closeGatt(recordDiagnostic: boolean = true): void {
   rejectQueuedWrites(
     makeError('ble_disconnected', 'BLE 连接已断开，pending write 已取消', 'connection', true)
   )
+  resetControlProtocol('BLE 连接已断开，pending control transaction 已取消')
   sessionGeneration += 1
   if (gatt != null) {
     try {
@@ -503,6 +583,749 @@ function numbersToByteArray(value: Array<number>): ByteArray {
   return bytes
 }
 
+function normalizeUint32(value: number): number {
+  const modulo = 4294967296
+  const normalized = value % modulo
+  return normalized < 0 ? normalized + modulo : normalized
+}
+
+function readUint16Le(bytes: Array<number>, offset: number): number {
+  return (bytes[offset] & 0xff) | ((bytes[offset + 1] & 0xff) << 8)
+}
+
+function readUint32Le(bytes: Array<number>, offset: number): number {
+  return normalizeUint32(
+    (bytes[offset] & 0xff) +
+      ((bytes[offset + 1] & 0xff) * 256) +
+      ((bytes[offset + 2] & 0xff) * 65536) +
+      ((bytes[offset + 3] & 0xff) * 16777216)
+  )
+}
+
+function writeUint16Le(bytes: Array<number>, offset: number, value: number): void {
+  bytes[offset] = value & 0xff
+  bytes[offset + 1] = (value >> 8) & 0xff
+}
+
+function writeUint32Le(bytes: Array<number>, offset: number, value: number): void {
+  const normalized = normalizeUint32(value)
+  bytes[offset] = normalized & 0xff
+  bytes[offset + 1] = Math.floor(normalized / 256) & 0xff
+  bytes[offset + 2] = Math.floor(normalized / 65536) & 0xff
+  bytes[offset + 3] = Math.floor(normalized / 16777216) & 0xff
+}
+
+function byteSlice(bytes: Array<number>, start: number, end: number): Array<number> {
+  const result = new Array<number>()
+  for (let index = start; index < end && index < bytes.length; index++) {
+    result.push(bytes[index] & 0xff)
+  }
+  return result
+}
+
+function bytesToHex(bytes: Array<number>, limit: number = 32): string {
+  const parts = new Array<string>()
+  const count = bytes.length > limit ? limit : bytes.length
+  for (let index = 0; index < count; index++) {
+    parts.push((bytes[index] & 0xff).toString(16).padStart(2, '0'))
+  }
+  return parts.join(' ')
+}
+
+function utf8Decode(bytes: Array<number>): string {
+  let result = ''
+  let index = 0
+  while (index < bytes.length) {
+    const first = bytes[index] & 0xff
+    if (first < 0x80) {
+      result += String.fromCharCode(first)
+      index += 1
+      continue
+    }
+    if (first >= 0xc0 && first < 0xe0 && index + 1 < bytes.length) {
+      const code = ((first & 0x1f) << 6) | (bytes[index + 1] & 0x3f)
+      result += String.fromCharCode(code)
+      index += 2
+      continue
+    }
+    if (first >= 0xe0 && first < 0xf0 && index + 2 < bytes.length) {
+      const code = ((first & 0x0f) << 12) |
+        ((bytes[index + 1] & 0x3f) << 6) |
+        (bytes[index + 2] & 0x3f)
+      result += String.fromCharCode(code)
+      index += 3
+      continue
+    }
+    if (first >= 0xf0 && index + 3 < bytes.length) {
+      const codePoint = ((first & 0x07) << 18) |
+        ((bytes[index + 1] & 0x3f) << 12) |
+        ((bytes[index + 2] & 0x3f) << 6) |
+        (bytes[index + 3] & 0x3f)
+      const adjusted = codePoint - 0x10000
+      result += String.fromCharCode(0xd800 + (adjusted >> 10))
+      result += String.fromCharCode(0xdc00 + (adjusted & 0x3ff))
+      index += 4
+      continue
+    }
+    result += '?'
+    index += 1
+  }
+  return result
+}
+
+let controlCrcTable: Array<number> | null = null
+
+function getControlCrcTable(): Array<number> {
+  if (controlCrcTable != null) {
+    return controlCrcTable!
+  }
+  const table = new Array<number>()
+  for (let index = 0; index < 256; index++) {
+    let crc = index
+    for (let bit = 0; bit < 8; bit++) {
+      crc = (crc & 1) != 0
+        ? ((crc >>> 1) ^ 0xedb88320)
+        : (crc >>> 1)
+    }
+    table.push(crc >>> 0)
+  }
+  controlCrcTable = table
+  return table
+}
+
+function controlCrc32(bytes: Array<number>): number {
+  const table = getControlCrcTable()
+  let crc = 0xffffffff
+  for (let index = 0; index < bytes.length; index++) {
+    const tableIndex = (crc ^ (bytes[index] & 0xff)) & 0xff
+    crc = ((crc >>> 8) ^ table[tableIndex]) >>> 0
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+function nextControlSendSn(): number {
+  let value = controlSendSn
+  controlSendSn = normalizeUint32(controlSendSn + 1)
+  if (value == 0) {
+    value = controlSendSn
+    controlSendSn = normalizeUint32(controlSendSn + 1)
+  }
+  return value
+}
+
+function nextControlAppDpSn(): number {
+  const value = controlAppDpSn
+  controlAppDpSn = normalizeUint32(controlAppDpSn + 1)
+  return value
+}
+
+function encodeControlPayload(sendSn: number, askSn: number, command: number, commandPayload: Array<number>): Array<number> {
+  const payload = new Array<number>()
+  for (let index = 0; index < CONTROL_PAYLOAD_HEADER_LENGTH + commandPayload.length; index++) {
+    payload.push(0)
+  }
+  writeUint32Le(payload, 0, sendSn)
+  writeUint32Le(payload, 4, askSn)
+  payload[8] = command & 0xff
+  for (let index = 0; index < commandPayload.length; index++) {
+    payload[CONTROL_PAYLOAD_HEADER_LENGTH + index] = commandPayload[index] & 0xff
+  }
+  return payload
+}
+
+function encodeControlFrame(desc: number, payload: Array<number>): Array<number> {
+  const hasCrc = (desc & CONTROL_DESC_CRC_MASK) != 0
+  const frameLength = CONTROL_FRAME_HEADER_LENGTH + payload.length + (hasCrc ? CONTROL_CRC_LENGTH : 0)
+  const frame = new Array<number>()
+  for (let index = 0; index < frameLength; index++) {
+    frame.push(0)
+  }
+  frame[0] = CONTROL_SYNC_FIRST
+  frame[1] = CONTROL_SYNC_SECOND
+  writeUint16Le(frame, 2, desc)
+  frame[4] = CONTROL_MESSAGE_TYPE
+  writeUint16Le(frame, 5, payload.length)
+  for (let index = 0; index < payload.length; index++) {
+    frame[CONTROL_FRAME_HEADER_LENGTH + index] = payload[index] & 0xff
+  }
+  if (hasCrc) {
+    writeUint32Le(frame, CONTROL_FRAME_HEADER_LENGTH + payload.length, controlCrc32(payload))
+  }
+  return frame
+}
+
+function decodeControlFrame(bytes: Array<number>): any {
+  if (bytes.length < CONTROL_FRAME_HEADER_LENGTH) {
+    throw makeError('control_frame_too_short', '控制协议帧长度不足', 'control', true, {
+      actualLength: bytes.length
+    })
+  }
+  if (bytes[0] != CONTROL_SYNC_FIRST || bytes[1] != CONTROL_SYNC_SECOND) {
+    throw makeError('control_frame_sync_invalid', '控制协议帧头不匹配', 'control', true, {
+      first: bytes[0],
+      second: bytes[1]
+    })
+  }
+  const desc = readUint16Le(bytes, 2)
+  const messageType = bytes[4] & 0xff
+  if (messageType != CONTROL_MESSAGE_TYPE) {
+    throw makeError('control_frame_type_invalid', '控制协议 MsgType 不匹配', 'control', true, {
+      messageType
+    })
+  }
+  const payloadLength = readUint16Le(bytes, 5)
+  const hasCrc = (desc & CONTROL_DESC_CRC_MASK) != 0
+  const expectedLength = CONTROL_FRAME_HEADER_LENGTH + payloadLength + (hasCrc ? CONTROL_CRC_LENGTH : 0)
+  if (bytes.length != expectedLength) {
+    throw makeError('control_frame_length_mismatch', '控制协议帧长度不匹配', 'control', true, {
+      expectedLength,
+      actualLength: bytes.length,
+      payloadLength
+    })
+  }
+  const payload = byteSlice(bytes, CONTROL_FRAME_HEADER_LENGTH, CONTROL_FRAME_HEADER_LENGTH + payloadLength)
+  if (hasCrc) {
+    const expectedCrc = readUint32Le(bytes, CONTROL_FRAME_HEADER_LENGTH + payloadLength)
+    const actualCrc = controlCrc32(payload)
+    if (expectedCrc != actualCrc) {
+      throw makeError('control_crc_mismatch', '控制协议 CRC32 校验失败', 'control', true, {
+        expectedCrc,
+        actualCrc
+      })
+    }
+  }
+  return {
+    desc,
+    error: (desc & CONTROL_DESC_ERROR_MASK) != 0,
+    ack: (desc & 0x0010) != 0,
+    payload
+  }
+}
+
+function decodeControlPayload(payload: Array<number>): any {
+  if (payload.length < CONTROL_PAYLOAD_HEADER_LENGTH) {
+    throw makeError('control_payload_too_short', '控制协议 Payload 长度不足', 'control', true, {
+      actualLength: payload.length
+    })
+  }
+  const command = payload[8] & 0xff
+  if (
+    command != CONTROL_CMD_DP_QUERY &&
+    command != CONTROL_CMD_DP_SEND &&
+    command != CONTROL_CMD_DP_WRITE
+  ) {
+    throw makeError('control_command_unknown', '控制协议 CMD 未知', 'control', true, { command })
+  }
+  return {
+    sendSn: readUint32Le(payload, 0),
+    askSn: readUint32Le(payload, 4),
+    command,
+    commandPayload: byteSlice(payload, CONTROL_PAYLOAD_HEADER_LENGTH, payload.length)
+  }
+}
+
+function encodeDpCommandPayload(dpSn: number, dpData: Array<number> | null = null): Array<number> {
+  const data = dpData == null ? new Array<number>() : dpData
+  const payload = new Array<number>()
+  for (let index = 0; index < CONTROL_DP_SEQUENCE_LENGTH + data.length; index++) {
+    payload.push(0)
+  }
+  writeUint32Le(payload, 0, dpSn)
+  for (let index = 0; index < data.length; index++) {
+    payload[CONTROL_DP_SEQUENCE_LENGTH + index] = data[index] & 0xff
+  }
+  return payload
+}
+
+function decodeDpData(commandPayload: Array<number>): Array<number> {
+  if (commandPayload.length < CONTROL_DP_SEQUENCE_LENGTH) {
+    throw makeError('control_dp_payload_too_short', '控制协议 DP Payload 长度不足', 'control', true, {
+      actualLength: commandPayload.length
+    })
+  }
+  return byteSlice(commandPayload, CONTROL_DP_SEQUENCE_LENGTH, commandPayload.length)
+}
+
+function encodeDataPoint(dpId: number, typeCode: number, rawValue: Array<number>): Array<number> {
+  const bytes = new Array<number>()
+  for (let index = 0; index < 4 + rawValue.length; index++) {
+    bytes.push(0)
+  }
+  bytes[0] = dpId & 0xff
+  bytes[1] = typeCode & 0xff
+  writeUint16Le(bytes, 2, rawValue.length)
+  for (let index = 0; index < rawValue.length; index++) {
+    bytes[4 + index] = rawValue[index] & 0xff
+  }
+  return bytes
+}
+
+function decodeDataPoint(bytes: Array<number>): any | null {
+  if (bytes.length == 0) {
+    return null
+  }
+  if (bytes.length < 4) {
+    throw makeError('dp_data_too_short', 'DP 数据长度不足', 'control', true, {
+      actualLength: bytes.length
+    })
+  }
+  const dpId = bytes[0] & 0xff
+  const typeCode = bytes[1] & 0xff
+  const declaredLength = readUint16Le(bytes, 2)
+  const actualLength = bytes.length - 4
+  if (actualLength < declaredLength) {
+    throw makeError('dp_data_length_mismatch', 'DP 数据长度不匹配', 'control', true, {
+      dpId,
+      declaredLength,
+      actualLength
+    })
+  }
+  return {
+    id: dpId,
+    typeCode,
+    rawValue: byteSlice(bytes, 4, 4 + declaredLength)
+  }
+}
+
+function readFlexibleInt(dpId: number, bytes: Array<number>): number {
+  if (bytes.length == 1) {
+    return bytes[0] & 0xff
+  }
+  if (bytes.length == 2) {
+    return readUint16Le(bytes, 0)
+  }
+  if (bytes.length == 4) {
+    return readUint32Le(bytes, 0)
+  }
+  throw makeError('dp_integer_length_invalid', 'DP 整数长度不支持', 'control', true, {
+    dpId,
+    length: bytes.length
+  })
+}
+
+function formatVersionNumber(value: number): string {
+  const hex = value.toString(16).padStart(6, '0')
+  const part1 = parseInt(hex.substring(0, 2), 10)
+  const part2 = parseInt(hex.substring(2, 4), 10)
+  const part3 = parseInt(hex.substring(4, 6), 10)
+  return `${part1}.${part2}.${part3}`
+}
+
+function dpNameOf(dpId: number): string {
+  if (dpId == DP_ID_BATTERY) return 'batteryPercentage'
+  if (dpId == DP_ID_DEVICE_NAME) return 'deviceName'
+  if (dpId == DP_ID_FIRMWARE_VERSION) return 'firmwareVersion'
+  if (dpId == DP_ID_HARDWARE_VERSION) return 'hardwareVersion'
+  if (dpId == DP_ID_RECORD_STATE) return 'recordState'
+  if (dpId == DP_ID_APP_TIME) return 'appTime'
+  if (dpId == DP_ID_FLASH_CAPACITY) return 'flashCapacity'
+  if (dpId == DP_ID_SN) return 'sn'
+  if (dpId == DP_ID_EQ_MODE) return 'eqMode'
+  return `dp_${dpId}`
+}
+
+function decodeDpValue(dp: any): any {
+  const raw = dp.rawValue as Array<number>
+  const dpId = Number(dp.id)
+  if (dpId == DP_ID_BATTERY) {
+    return readFlexibleInt(dpId, raw)
+  }
+  if (dpId == DP_ID_DEVICE_NAME || dpId == DP_ID_SN) {
+    return utf8Decode(raw)
+  }
+  if (dpId == DP_ID_FIRMWARE_VERSION || dpId == DP_ID_HARDWARE_VERSION) {
+    return formatVersionNumber(readFlexibleInt(dpId, raw))
+  }
+  if (dpId == DP_ID_EQ_MODE) {
+    return {
+      modeCount: raw.length > 0 ? raw[0] : 0,
+      currentMode: raw.length >= 3 ? raw[2] : (raw.length > 0 ? raw[raw.length - 1] : 0),
+      raw
+    }
+  }
+  if (dpId == DP_ID_RECORD_STATE) {
+    if (raw.length < 6) {
+      throw makeError('record_state_length_invalid', '录音状态 DP 长度不足', 'control', true, {
+        length: raw.length
+      })
+    }
+    const recordedFrameCount = readUint32Le(raw, 2)
+    return {
+      state: readUint16Le(raw, 0),
+      recordedFrameCount,
+      durationMs: recordedFrameCount * 20
+    }
+  }
+  if (dpId == DP_ID_FLASH_CAPACITY) {
+    if (raw.length < 4) {
+      throw makeError('flash_capacity_length_invalid', 'Flash 容量 DP 长度不足', 'control', true, {
+        length: raw.length
+      })
+    }
+    const totalBlocks = readUint16Le(raw, 0)
+    const freeBlocks = readUint16Le(raw, 2)
+    return {
+      totalBlocks,
+      freeBlocks,
+      totalBytes: totalBlocks * FLASH_BLOCK_BYTES,
+      freeBytes: freeBlocks * FLASH_BLOCK_BYTES,
+      raw
+    }
+  }
+  if (dp.typeCode == DP_TYPE_BOOL) {
+    return raw.length > 0 && raw[0] != 0
+  }
+  if (dp.typeCode == DP_TYPE_NUMBER || dp.typeCode == DP_TYPE_ENUM) {
+    return readFlexibleInt(dpId, raw)
+  }
+  if (dp.typeCode == DP_TYPE_STRING) {
+    return utf8Decode(raw)
+  }
+  return raw
+}
+
+function normalizeDp(dp: any): any {
+  const value = decodeDpValue(dp)
+  return {
+    dpId: dp.id,
+    id: dp.id,
+    name: dpNameOf(dp.id),
+    typeCode: dp.typeCode,
+    rawValue: dp.rawValue,
+    raw: dp.rawValue,
+    value,
+    timestamp: nowIso()
+  }
+}
+
+function storeAndEmitDp(dp: any, source: string): any {
+  const event = normalizeDp(dp)
+  event.source = source
+  dpSnapshot.set(event.dpId, event)
+  pushDiagnostic('dp_report', {
+    dpId: event.dpId,
+    name: event.name,
+    source,
+    valueLength: event.rawValue.length
+  })
+  dpCallbacks.forEach((callback) => {
+    callback(event)
+  })
+  return event
+}
+
+function buildControlQueryFrame(dpId: number, sendSn: number): Array<number> {
+  return encodeControlFrame(
+    CONTROL_DESC_REQUEST,
+    encodeControlPayload(sendSn, 0, CONTROL_CMD_DP_QUERY, [dpId & 0xff])
+  )
+}
+
+function buildControlWriteFrame(dpId: number, typeCode: number, rawValue: Array<number>, sendSn: number, appDpSn: number): Array<number> {
+  return encodeControlFrame(
+    CONTROL_DESC_REQUEST,
+    encodeControlPayload(
+      sendSn,
+      0,
+      CONTROL_CMD_DP_WRITE,
+      encodeDpCommandPayload(appDpSn, encodeDataPoint(dpId, typeCode, rawValue))
+    )
+  )
+}
+
+function buildControlReportAckFrame(reportSendSn: number): Array<number> {
+  const sendSn = nextControlSendSn()
+  return encodeControlFrame(
+    CONTROL_DESC_ACK,
+    encodeControlPayload(sendSn, reportSendSn, CONTROL_CMD_DP_SEND, new Array<number>())
+  )
+}
+
+function ensureControlReady(): OleapBleNativeError | null {
+  const initError = ensureInitialized()
+  if (initError != null) {
+    return initError
+  }
+  if (connectedGatt == null || connectedDeviceId == null) {
+    return makeError('device_not_connected', '尚未连接 Oleap 设备', 'connection', true)
+  }
+  if (communicationWriteChar == null || communicationNotifyChar == null || enablingNotifications) {
+    return makeError('control_channel_not_ready', '控制协议通道尚未就绪', 'control', true, channelReadySnapshot())
+  }
+  return null
+}
+
+function completeControlRequest(request: any, value: any | null): void {
+  if (request == null || request.completed == true) {
+    return
+  }
+  clearControlTimeout()
+  request.completed = true
+  if (activeControlTransaction == request) {
+    activeControlTransaction = null
+  }
+  request.resolve(value)
+  processNextControlTransaction()
+}
+
+function failControlRequest(request: any, error: OleapBleNativeError, emit: boolean = true): void {
+  if (request == null || request.completed == true) {
+    return
+  }
+  clearControlTimeout()
+  if (activeControlTransaction == request) {
+    activeControlTransaction = null
+  }
+  rejectControlRequest(request, error, emit)
+  processNextControlTransaction()
+}
+
+function sendControlAttempt(request: any): void {
+  if (request.completed == true) {
+    return
+  }
+  if (request.generation != sessionGeneration) {
+    failControlRequest(
+      request,
+      makeError('control_stale_generation', '控制协议 session 已失效', 'control', true, {
+        requestGeneration: request.generation,
+        currentGeneration: sessionGeneration
+      })
+    )
+    return
+  }
+  request.attempts = Number(request.attempts) + 1
+  pushDiagnostic('control_write_attempt', {
+    kind: request.kind,
+    dpId: request.dpId,
+    sendSn: request.sendSn,
+    attempt: request.attempts,
+    maxAttempts: CONTROL_MAX_ATTEMPTS,
+    length: request.frame.length
+  })
+  writeCommunicationBytes(request.frame, true)
+    .then(() => {
+      if (request.completed == true || activeControlTransaction != request) {
+        return
+      }
+      controlTimeoutId = setTimeout(() => {
+        if (request.completed == true || activeControlTransaction != request) {
+          return
+        }
+        clearControlTimeout()
+        if (Number(request.attempts) < CONTROL_MAX_ATTEMPTS) {
+          pushDiagnostic('control_retry', {
+            kind: request.kind,
+            dpId: request.dpId,
+            sendSn: request.sendSn,
+            attempts: request.attempts
+          })
+          sendControlAttempt(request)
+          return
+        }
+        failControlRequest(
+          request,
+          makeError('control_timeout', '控制协议事务超时', 'control', true, {
+            kind: request.kind,
+            dpId: request.dpId,
+            sendSn: request.sendSn,
+            attempts: request.attempts,
+            timeoutMs: DEFAULT_CONTROL_TIMEOUT_MS
+          })
+        )
+      }, DEFAULT_CONTROL_TIMEOUT_MS)
+    })
+    .catch((error) => {
+      failControlRequest(
+        request,
+        makeError('control_write_failed', '控制协议写入失败', 'control', true, {
+          kind: request.kind,
+          dpId: request.dpId,
+          sendSn: request.sendSn,
+          error: `${error}`
+        })
+      )
+    })
+}
+
+function processNextControlTransaction(): void {
+  if (activeControlTransaction != null) {
+    return
+  }
+  const request = controlTransactionQueue.shift()
+  if (request == null) {
+    return
+  }
+  activeControlTransaction = request
+  sendControlAttempt(request)
+}
+
+function enqueueControlTransaction(kind: string, dpId: number, frame: Array<number>, sendSn: number): Promise<any> {
+  const readyError = ensureControlReady()
+  if (readyError != null) {
+    return rejectWith<any>(readyError)
+  }
+  return new Promise<any>((resolve, reject) => {
+    const request = {
+      kind,
+      dpId,
+      frame,
+      sendSn,
+      attempts: 0,
+      generation: sessionGeneration,
+      completed: false,
+      resolve,
+      reject
+    }
+    controlTransactionQueue.push(request)
+    pushDiagnostic('control_transaction_enqueued', {
+      kind,
+      dpId,
+      sendSn,
+      queueDepth: controlTransactionQueue.length,
+      generation: sessionGeneration
+    })
+    processNextControlTransaction()
+  })
+}
+
+function queryDp(dpId: number): Promise<any> {
+  const sendSn = nextControlSendSn()
+  return enqueueControlTransaction('query', dpId, buildControlQueryFrame(dpId, sendSn), sendSn)
+}
+
+function writeDp(dpId: number, typeCode: number, rawValue: Array<number>): Promise<any> {
+  const sendSn = nextControlSendSn()
+  const appDpSn = nextControlAppDpSn()
+  return enqueueControlTransaction(
+    'write',
+    dpId,
+    buildControlWriteFrame(dpId, typeCode, rawValue, sendSn, appDpSn),
+    sendSn
+  )
+}
+
+function ackControlReport(sendSn: number): void {
+  const frame = buildControlReportAckFrame(sendSn)
+  writeCommunicationBytes(frame, true)
+    .then(() => {
+      pushDiagnostic('control_device_report_ack_sent', { askSn: sendSn })
+    })
+    .catch((error) => {
+      emitError(
+        makeError('control_ack_failed', '控制协议主动上报 ACK 发送失败', 'control', true, {
+          askSn: sendSn,
+          error: `${error}`
+        })
+      )
+    })
+}
+
+function handleControlDpSend(frame: any, payload: any): void {
+  const dpData = decodeDpData(payload.commandPayload)
+  const decoded = decodeDataPoint(dpData)
+  if (payload.askSn == 0) {
+    ackControlReport(payload.sendSn)
+  }
+  if (decoded == null) {
+    return
+  }
+  const event = storeAndEmitDp(decoded, payload.askSn == 0 ? 'report' : 'response')
+  const active = activeControlTransaction
+  if (
+    payload.askSn != 0 &&
+    active != null &&
+    active.kind == 'query' &&
+    payload.askSn == active.sendSn
+  ) {
+    pushDiagnostic('control_response_matched', {
+      kind: active.kind,
+      dpId: active.dpId,
+      sendSn: active.sendSn,
+      askSn: payload.askSn
+    })
+    completeControlRequest(active, event)
+  } else if (payload.askSn != 0 && frame.error) {
+    pushDiagnostic('control_dp_send_error', {
+      dpId: decoded.id,
+      sendSn: payload.sendSn,
+      askSn: payload.askSn
+    })
+  }
+}
+
+function handleControlDpWrite(frame: any, payload: any): void {
+  const active = activeControlTransaction
+  if (
+    active == null ||
+    active.kind != 'write' ||
+    payload.askSn != active.sendSn
+  ) {
+    return
+  }
+  let rollback: any | null = null
+  const dpData = decodeDpData(payload.commandPayload)
+  const decoded = decodeDataPoint(dpData)
+  if (decoded != null) {
+    rollback = storeAndEmitDp(decoded, frame.error ? 'rollback' : 'writeResponse')
+  }
+  if (frame.error) {
+    failControlRequest(
+      active,
+      makeError('control_write_rejected', '设备拒绝控制协议写入', 'control', true, {
+        dpId: active.dpId,
+        sendSn: active.sendSn,
+        rollback
+      })
+    )
+    return
+  }
+  pushDiagnostic('control_response_matched', {
+    kind: active.kind,
+    dpId: active.dpId,
+    sendSn: active.sendSn,
+    askSn: payload.askSn
+  })
+  completeControlRequest(active, rollback)
+}
+
+function handleControlIncomingFrame(bytes: Array<number>, generation: number): void {
+  if (generation != sessionGeneration) {
+    pushDiagnostic('stale_control_frame_ignored', { generation, current: sessionGeneration })
+    return
+  }
+  try {
+    const frame = decodeControlFrame(bytes)
+    const payload = decodeControlPayload(frame.payload)
+    pushDiagnostic('control_response_received', {
+      sendSn: payload.sendSn,
+      askSn: payload.askSn,
+      command: payload.command,
+      payloadLength: frame.payload.length,
+      error: frame.error
+    })
+    if (payload.command == CONTROL_CMD_DP_SEND) {
+      handleControlDpSend(frame, payload)
+      return
+    }
+    if (payload.command == CONTROL_CMD_DP_WRITE) {
+      handleControlDpWrite(frame, payload)
+    }
+  } catch (error) {
+    const maybeError = error as any
+    let nativeError: OleapBleNativeError
+    if (maybeError != null && maybeError.code != null && maybeError.area != null) {
+      nativeError = maybeError as OleapBleNativeError
+    } else {
+      nativeError = makeError('control_protocol_error', '控制协议解析失败', 'control', true, {
+        error: `${error}`,
+        head: bytesToHex(bytes)
+      })
+    }
+    emitError(nativeError)
+  }
+}
+
 function handleCommunicationNotify(bytes: Array<number>, generation: number): void {
   if (generation != sessionGeneration) {
     pushDiagnostic('stale_communication_notify_ignored', { generation, current: sessionGeneration })
@@ -512,6 +1335,7 @@ function handleCommunicationNotify(bytes: Array<number>, generation: number): vo
     length: bytes.length,
     generation
   })
+  handleControlIncomingFrame(bytes, generation)
 }
 
 function handleRecordNotify(bytes: Array<number>, generation: number): void {
@@ -1231,43 +2055,82 @@ export function getConnectionState(): any {
 }
 
 export function getBattery(): Promise<number> {
-  return notImplemented<number>('control_not_ready', '控制协议将在 P2 实现', 'control')
+  return queryDp(DP_ID_BATTERY).then((event) => {
+    return Number(event.value)
+  })
 }
 
 export function getSn(): Promise<string> {
-  return notImplemented<string>('control_not_ready', '控制协议将在 P2 实现', 'control')
+  return queryDp(DP_ID_SN).then((event) => {
+    return `${event.value}`
+  })
 }
 
 export function getDeviceName(): Promise<string> {
-  return notImplemented<string>('control_not_ready', '控制协议将在 P2 实现', 'control')
+  return queryDp(DP_ID_DEVICE_NAME).then((event) => {
+    return `${event.value}`
+  })
 }
 
 export function getFirmwareVersion(): Promise<string> {
-  return notImplemented<string>('control_not_ready', '控制协议将在 P2 实现', 'control')
+  return queryDp(DP_ID_FIRMWARE_VERSION).then((event) => {
+    return `${event.value}`
+  })
 }
 
 export function getHardwareVersion(): Promise<string> {
-  return notImplemented<string>('control_not_ready', '控制协议将在 P2 实现', 'control')
+  return queryDp(DP_ID_HARDWARE_VERSION).then((event) => {
+    return `${event.value}`
+  })
 }
 
 export function getEqMode(): Promise<any> {
-  return notImplemented<any>('control_not_ready', '控制协议将在 P2 实现', 'control')
+  return queryDp(DP_ID_EQ_MODE).then((event) => {
+    return event.value
+  })
 }
 
 export function setEqMode(options: any): Promise<any> {
-  return notImplemented<any>('control_not_ready', '控制协议将在 P2 实现', 'control')
+  const mode = options == null || options.mode == null ? -1 : Number(options.mode)
+  if (mode < 0 || mode > 255 || Math.floor(mode) != mode) {
+    return rejectWith<any>(
+      makeError('invalid_eq_mode', 'EQ 模式必须是 0-255 的整数', 'control', false, { mode })
+    )
+  }
+  return writeDp(DP_ID_EQ_MODE, DP_TYPE_RAW, [mode]).then((event) => {
+    if (event == null) {
+      return {
+        modeCount: 0,
+        currentMode: mode,
+        raw: [mode]
+      }
+    }
+    return event.value
+  })
 }
 
 export function getRecordState(): Promise<any> {
-  return notImplemented<any>('control_not_ready', '控制协议将在 P2 实现', 'control')
+  return queryDp(DP_ID_RECORD_STATE).then((event) => {
+    return event.value
+  })
 }
 
 export function getFlashCapacity(): Promise<any> {
-  return notImplemented<any>('control_not_ready', '控制协议将在 P2 实现', 'control')
+  return queryDp(DP_ID_FLASH_CAPACITY).then((event) => {
+    return event.value
+  })
 }
 
 export function syncAppTime(): Promise<void> {
-  return notImplemented<void>('control_not_ready', '控制协议将在 P2 实现', 'control')
+  const now = new Date()
+  return writeDp(DP_ID_APP_TIME, DP_TYPE_RAW, [
+    now.getFullYear() % 100,
+    now.getMonth() + 1,
+    now.getDate(),
+    now.getHours(),
+    now.getMinutes(),
+    now.getSeconds()
+  ]).then((_event) => {})
 }
 
 export function startRecording(options: any | null = null): Promise<any> {
@@ -1341,6 +2204,19 @@ export function getDiagnostics(): any {
     connecting,
     generation: sessionGeneration,
     channels: channelReadySnapshot(),
+    control: {
+      active: activeControlTransaction == null
+        ? null
+        : {
+            kind: activeControlTransaction.kind,
+            dpId: activeControlTransaction.dpId,
+            sendSn: activeControlTransaction.sendSn,
+            attempts: activeControlTransaction.attempts,
+            generation: activeControlTransaction.generation
+          },
+      queueDepth: controlTransactionQueue.length,
+      snapshotSize: dpSnapshot.size
+    },
     events: diagnostics.slice()
   }
 }

@@ -19,10 +19,11 @@
 - GATT callback 绑定 generation，旧连接回调不会推进新连接。
 - `getDiagnostics()` 暴露 `notificationsReady`、generation 和 transport 事件。
 
-未实现：
+当时未实现，后续报告补齐或继续推进：
 
-- 控制协议 frame codec、DP codec 和事务管理。
-- notify payload 到控制协议/录音协议的业务分发。
+- 控制协议 frame codec、DP codec 和事务管理已在 `phase-2-android-control-acceptance-report.md` 补齐。
+- communication notify payload 到控制协议的业务分发已在 `phase-2-android-control-acceptance-report.md` 补齐。
+- record notify payload 到录音协议的业务分发。
 - 实时录音 OPUS 解码和 WAV 输出。
 - Flash 文件协议。
 - iOS BLE Host。

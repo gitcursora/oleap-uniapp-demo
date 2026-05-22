@@ -23,7 +23,7 @@
 - Android GATT 连接已在 `phase-1-android-connect-acceptance-report.md` 补齐。
 - Service/Characteristic 发现已在 `phase-1-android-connect-acceptance-report.md` 补齐。
 - Notify 订阅已在 `phase-1-android-notify-write-acceptance-report.md` 补齐。
-- 控制协议事务。
+- 控制协议事务已在 `phase-2-android-control-acceptance-report.md` 补齐。
 - 录音协议和 OPUS 解码。
 
 ## 验收命令

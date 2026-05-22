@@ -58,7 +58,7 @@ Phase 0 check passed
 - 连接中的设备使用 `pendingDeviceId`，避免 `getConnectionState()` 在服务发现前误报 connected。
 - 断开和连接失败都会清理 GATT、pending timer 和 characteristic cache。
 - Notify 订阅和写队列已作为独立 P1-5/P1-6 步骤验收，避免连接发现步骤职责过大。
-- 控制协议 API 仍返回 `control_not_ready`，边界清晰。
+- 控制协议已在 `phase-2-android-control-acceptance-report.md` 作为独立步骤验收。
 
 ## 待真机验证
 

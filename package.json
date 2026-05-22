@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "check:phase0": "node scripts/check-phase0.mjs",
-    "check:p1-android": "node scripts/check-p1-android.mjs"
+    "check:p1-android": "node scripts/check-p1-android.mjs",
+    "check:p2-control": "node scripts/check-p2-control.mjs"
   },
   "engines": {
     "node": ">=18"
