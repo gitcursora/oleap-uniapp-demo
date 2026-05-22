@@ -37,7 +37,7 @@ if (!existsSync(reportPath)) {
 const crcTable = buildCrcTable()
 
 const requiredControlStrings = [
-  '0.1.0-p2-control',
+  'SDK_VERSION',
   'CONTROL_SYNC_FIRST',
   'CONTROL_SYNC_SECOND',
   'CONTROL_MESSAGE_TYPE',

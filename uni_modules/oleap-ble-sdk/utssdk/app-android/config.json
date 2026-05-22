@@ -3,6 +3,5 @@
   "abiFilters": [
     "arm64-v8a"
   ],
-  "note": "Phase 0 skeleton. Native BLE and libopus bridge are implemented in later phases."
+  "note": "Android BLE, control protocol and realtime recording OPUS capture are implemented. libopus/WAV finalize is implemented in a later phase."
 }
-

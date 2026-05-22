@@ -7,7 +7,8 @@
   "scripts": {
     "check:phase0": "node scripts/check-phase0.mjs",
     "check:p1-android": "node scripts/check-p1-android.mjs",
-    "check:p2-control": "node scripts/check-p2-control.mjs"
+    "check:p2-control": "node scripts/check-p2-control.mjs",
+    "check:p3-recording": "node scripts/check-p3-recording.mjs"
   },
   "engines": {
     "node": ">=18"

@@ -12,6 +12,8 @@ import ScanResult from 'android.bluetooth.le.ScanResult'
 import ScanSettings from 'android.bluetooth.le.ScanSettings'
 import Context from 'android.content.Context'
 import Build from 'android.os.Build'
+import File from 'java.io.File'
+import FileOutputStream from 'java.io.FileOutputStream'
 import UUID from 'java.util.UUID'
 import { OleapBleNativeError } from '../unierror.uts'
 
@@ -21,13 +23,14 @@ type NativeDpCallback = (event: any) => void
 type NativeProgressCallback = (event: any) => void
 type NativeErrorCallback = (event: any) => void
 
-const SDK_VERSION = '0.1.0-p2-control'
+const SDK_VERSION = '0.1.0-p3-recording'
 const OLEAP_NAME_PREFIX = 'Oleap'
 const DIAGNOSTIC_LIMIT = 500
 const DEFAULT_SCAN_TIMEOUT_MS = 8000
 const DEFAULT_CONNECT_TIMEOUT_MS = 15000
 const DEFAULT_WRITE_TIMEOUT_MS = 8000
 const DEFAULT_CONTROL_TIMEOUT_MS = 3000
+const DEFAULT_RECORDING_COMMAND_TIMEOUT_MS = 3000
 const CONTROL_MAX_ATTEMPTS = 3
 
 const COMMUNICATION_SERVICE_UUID = '00002001-0000-1000-8000-00805f9b34fb'
@@ -69,6 +72,19 @@ const DP_ID_SN = 0x80
 const DP_ID_EQ_MODE = 0x81
 const FLASH_BLOCK_BYTES = 32 * 1024
 
+const RECORDING_COMMAND_STOP = 0x0081
+const RECORDING_COMMAND_MEETING = 0x0181
+const RECORDING_COMMAND_CALL = 0x0281
+const RECORDING_COMMAND_MEDIA = 0x0381
+const RECORDING_COMMAND_AMBIENT = 0x0481
+const RECORDING_COMMAND_SCENE_6 = 0x0681
+const RECORDING_COMMAND_SCENE_7 = 0x0781
+const RECORDING_RESPONSE_STOP = 0x0080
+const RECORDING_RESPONSE_START = 0x1280
+const RECORDING_FRAME_HEADER_LENGTH = 4
+const RECORDING_SAMPLE_RATE = 16000
+const RECORDING_PROGRESS_THROTTLE_MS = 200
+
 let initialized = false
 let scanning = false
 let scannerCallback: OleapScanCallback | null = null
@@ -98,6 +114,10 @@ let controlAppDpSn = 0
 let activeControlTransaction: any | null = null
 const controlTransactionQueue = new Array<any>()
 let controlTimeoutId: number | null = null
+let recordingSession: any | null = null
+let recordingSessionCounter = 0
+let pendingRecordingCommand: any | null = null
+let recordingCommandTimeoutId: number | null = null
 let pendingConnectResolve: ((device: any) => void) | null = null
 let pendingConnectReject: ((error: OleapBleNativeError) => void) | null = null
 
@@ -207,6 +227,13 @@ function clearControlTimeout(): void {
   }
 }
 
+function clearRecordingCommandTimeout(): void {
+  if (recordingCommandTimeoutId != null) {
+    clearTimeout(recordingCommandTimeoutId!)
+    recordingCommandTimeoutId = null
+  }
+}
+
 function rejectControlRequest(request: any, error: OleapBleNativeError, emit: boolean = true): void {
   if (request == null || request.completed == true) {
     return
@@ -238,6 +265,46 @@ function resetControlProtocol(reason: string): void {
   controlSendSn = 0
   controlAppDpSn = 0
   dpSnapshot.clear()
+}
+
+function rejectRecordingCommand(request: any, error: OleapBleNativeError, emit: boolean = true): void {
+  if (request == null || request.completed == true) {
+    return
+  }
+  request.completed = true
+  if (pendingRecordingCommand == request) {
+    pendingRecordingCommand = null
+  }
+  clearRecordingCommandTimeout()
+  if (emit) {
+    emitError(error)
+  }
+  if (request.reject != null) {
+    request.reject(error)
+  }
+}
+
+function resetRecordingProtocol(reason: string): void {
+  clearRecordingCommandTimeout()
+  const error = makeError(
+    'recording_disconnected',
+    reason,
+    'recording',
+    true,
+    { generation: sessionGeneration }
+  )
+  const pending = pendingRecordingCommand
+  pendingRecordingCommand = null
+  rejectRecordingCommand(pending, error, false)
+  if (recordingSession != null) {
+    closeRecordingSessionStreams(recordingSession)
+    pushDiagnostic('recording_session_abandoned', {
+      sessionId: recordingSession.sessionId,
+      frameCount: recordingSession.frameCount,
+      reason
+    })
+  }
+  recordingSession = null
 }
 
 function getContext(): Context | null {
@@ -478,6 +545,7 @@ function closeGatt(recordDiagnostic: boolean = true): void {
     makeError('ble_disconnected', 'BLE 连接已断开，pending write 已取消', 'connection', true)
   )
   resetControlProtocol('BLE 连接已断开，pending control transaction 已取消')
+  resetRecordingProtocol('BLE 连接已断开，pending recording session 已取消')
   sessionGeneration += 1
   if (gatt != null) {
     try {
@@ -591,6 +659,10 @@ function normalizeUint32(value: number): number {
 
 function readUint16Le(bytes: Array<number>, offset: number): number {
   return (bytes[offset] & 0xff) | ((bytes[offset + 1] & 0xff) << 8)
+}
+
+function readUint16Be(bytes: Array<number>, offset: number): number {
+  return ((bytes[offset] & 0xff) << 8) | (bytes[offset + 1] & 0xff)
 }
 
 function readUint32Le(bytes: Array<number>, offset: number): number {
@@ -1338,6 +1410,549 @@ function handleCommunicationNotify(bytes: Array<number>, generation: number): vo
   handleControlIncomingFrame(bytes, generation)
 }
 
+function buildRecordingCommand(command: number, payload: Array<number> | null = null): Array<number> {
+  const data = payload == null ? new Array<number>() : payload
+  const frame = new Array<number>()
+  for (let index = 0; index < 4 + data.length; index++) {
+    frame.push(0)
+  }
+  frame[0] = (command >> 8) & 0xff
+  frame[1] = command & 0xff
+  writeUint16Le(frame, 2, data.length)
+  for (let index = 0; index < data.length; index++) {
+    frame[4 + index] = data[index] & 0xff
+  }
+  return frame
+}
+
+function recordingSceneCommandOf(value: any | null): any {
+  const raw = value == null ? 'meeting' : `${value}`
+  if (raw == 'meeting' || raw == '1') {
+    return { scene: 'meeting', command: RECORDING_COMMAND_MEETING }
+  }
+  if (raw == 'call' || raw == '2') {
+    return { scene: 'call', command: RECORDING_COMMAND_CALL }
+  }
+  if (raw == 'media' || raw == '3') {
+    return { scene: 'media', command: RECORDING_COMMAND_MEDIA }
+  }
+  if (raw == 'ambient' || raw == '4') {
+    return { scene: 'ambient', command: RECORDING_COMMAND_AMBIENT }
+  }
+  if (raw == '6') {
+    return { scene: 'scene_6', command: RECORDING_COMMAND_SCENE_6 }
+  }
+  if (raw == '7') {
+    return { scene: 'scene_7', command: RECORDING_COMMAND_SCENE_7 }
+  }
+  throw makeError('invalid_recording_scene', '录音场景不支持', 'recording', false, { scene: raw })
+}
+
+function requestedRecordingFormatOf(options: any | null): string {
+  const format = options == null || options.format == null ? 'wav' : `${options.format}`
+  if (format == 'wav' || format == 'mp3') {
+    return format
+  }
+  throw makeError('invalid_recording_format', '录音输出格式仅支持 wav 或 mp3', 'recording', false, { format })
+}
+
+function recordingBitrateOf(opusConfig: number): number {
+  const key = (opusConfig >> 4) & 0x0f
+  if (key == 1) return 24000
+  if (key == 2) return 16000
+  return 32000
+}
+
+function recordingChannelsOf(opusConfig: number): number {
+  const channels = opusConfig & 0x0f
+  return channels == 0 ? 1 : channels
+}
+
+function recordingFrameTimeMs(frameLen: number, bitrate: number): number {
+  if (bitrate <= 0) {
+    return 20
+  }
+  const value = Math.floor(frameLen * 8000 / bitrate)
+  return value > 0 ? value : 20
+}
+
+function splitRecordingFrames(bytes: Array<number>): any {
+  const frames = new Array<any>()
+  let offset = 0
+  let badFrames = 0
+  while (offset < bytes.length) {
+    if (bytes.length - offset < RECORDING_FRAME_HEADER_LENGTH) {
+      badFrames += 1
+      break
+    }
+    const frameLen = bytes[offset] & 0xff
+    if (frameLen <= 0) {
+      badFrames += 1
+      break
+    }
+    const end = offset + RECORDING_FRAME_HEADER_LENGTH + frameLen
+    if (end > bytes.length) {
+      badFrames += 1
+      break
+    }
+    const opusConfig = bytes[offset + 1] & 0xff
+    const bitrate = recordingBitrateOf(opusConfig)
+    const channels = recordingChannelsOf(opusConfig)
+    frames.push({
+      frameLen,
+      opusConfig,
+      dataIndex: readUint16Le(bytes, offset + 2),
+      bitrate,
+      channels,
+      sampleRate: RECORDING_SAMPLE_RATE,
+      frameTimeMs: recordingFrameTimeMs(frameLen, bitrate),
+      payload: byteSlice(bytes, offset + RECORDING_FRAME_HEADER_LENGTH, end),
+      rawFrame: byteSlice(bytes, offset, end)
+    })
+    offset = end
+  }
+  return {
+    frames,
+    badFrames
+  }
+}
+
+function parseRecordingResponse(bytes: Array<number>): any {
+  if (bytes.length >= 2) {
+    const command = readUint16Be(bytes, 0)
+    if (command == RECORDING_RESPONSE_START || command == RECORDING_RESPONSE_STOP) {
+      if (bytes.length < 4) {
+        throw makeError('recording_response_too_short', '录音响应长度不足', 'recording', true, {
+          length: bytes.length
+        })
+      }
+      const declaredLength = readUint16Le(bytes, 2)
+      if (bytes.length < 4 + declaredLength) {
+        throw makeError('recording_response_length_mismatch', '录音响应参数长度不匹配', 'recording', true, {
+          declaredLength,
+          actualLength: bytes.length - 4
+        })
+      }
+      if (command == RECORDING_RESPONSE_START) {
+        if (declaredLength < 4 || bytes.length < 8) {
+          throw makeError('recording_start_response_too_short', '录音启动响应长度不足', 'recording', true, {
+            declaredLength,
+            actualLength: bytes.length
+          })
+        }
+        return {
+          kind: 'start',
+          command,
+          startReason: bytes[4] & 0xff,
+          recordChannel: bytes[5] & 0xff,
+          packetLength: readUint16Le(bytes, 6)
+        }
+      }
+      if (declaredLength < 2 || bytes.length < 6) {
+        throw makeError('recording_stop_response_too_short', '录音停止响应长度不足', 'recording', true, {
+          declaredLength,
+          actualLength: bytes.length
+        })
+      }
+      return {
+        kind: 'stop',
+        command,
+        stopReason: bytes[4] & 0xff,
+        stopReasonScene: bytes[5] & 0xff
+      }
+    }
+  }
+  const result = splitRecordingFrames(bytes)
+  return {
+    kind: 'frames',
+    frames: result.frames,
+    badFrames: result.badFrames
+  }
+}
+
+function recordingOutputBasePath(): string {
+  const cachePath: string | null = UTSAndroid.getAppCachePath() as string
+  if (cachePath != null && cachePath.length > 0) {
+    return `${cachePath}/oleap-recordings`
+  }
+  const context = getContext()
+  if (context == null) {
+    return ''
+  }
+  return `${context.getCacheDir().getAbsolutePath()}/oleap-recordings`
+}
+
+function openRecordingSessionFiles(session: any): void {
+  const basePath = recordingOutputBasePath()
+  if (basePath.length == 0) {
+    throw makeError('recording_output_path_missing', '无法获取录音输出目录', 'recording', true)
+  }
+  const dir = new File(basePath)
+  if (!dir.exists() && !dir.mkdirs()) {
+    throw makeError('recording_output_dir_create_failed', '创建录音输出目录失败', 'recording', true, {
+      basePath
+    })
+  }
+  session.opusRawPath = `${basePath}/${session.sessionId}.opusraw`
+  session.framesPath = `${basePath}/${session.sessionId}.oleapframes`
+  const opusFile = new File(session.opusRawPath)
+  const framesFile = new File(session.framesPath)
+  session.opusRawStream = new FileOutputStream(opusFile, false)
+  session.framesStream = new FileOutputStream(framesFile, false)
+}
+
+function appendBytesToOutputStream(stream: any | null, bytes: Array<number>): void {
+  if (stream == null || bytes.length == 0) {
+    return
+  }
+  const output = stream as FileOutputStream
+  output.write(numbersToByteArray(bytes))
+}
+
+function closeOutputStream(stream: any | null): void {
+  if (stream == null) {
+    return
+  }
+  const output = stream as FileOutputStream
+  output.flush()
+  output.close()
+}
+
+function closeRecordingSessionStreams(session: any | null): void {
+  if (session == null) {
+    return
+  }
+  try {
+    closeOutputStream(session.opusRawStream)
+  } catch (error) {
+    emitError(makeError('recording_file_close_failed', '关闭 OPUS payload 文件失败', 'recording', true, {
+      sessionId: session.sessionId,
+      error: `${error}`
+    }))
+  }
+  try {
+    closeOutputStream(session.framesStream)
+  } catch (error) {
+    emitError(makeError('recording_file_close_failed', '关闭 OPUS 帧诊断文件失败', 'recording', true, {
+      sessionId: session.sessionId,
+      error: `${error}`
+    }))
+  }
+  session.opusRawStream = null
+  session.framesStream = null
+}
+
+function createRecordingSession(scene: string, startResponse: any): any {
+  recordingSessionCounter += 1
+  const timestamp = new Date().getTime()
+  const session = {
+    sessionId: `android-${timestamp}-${recordingSessionCounter}`,
+    scene,
+    startedAt: nowIso(),
+    stoppedAt: null,
+    generation: sessionGeneration,
+    recordChannel: startResponse.recordChannel,
+    packetLength: startResponse.packetLength,
+    sampleRate: RECORDING_SAMPLE_RATE,
+    channels: 1,
+    bitrate: 32000,
+    frameCount: 0,
+    lostFrames: 0,
+    outOfOrderFrames: 0,
+    badFrames: 0,
+    durationMs: 0,
+    opusPayloadBytes: 0,
+    framedBytes: 0,
+    lastIndex: null,
+    lastProgressAt: 0,
+    fileWriteError: null,
+    opusRawPath: '',
+    framesPath: '',
+    opusRawStream: null,
+    framesStream: null
+  }
+  openRecordingSessionFiles(session)
+  return session
+}
+
+function recordingSessionSummary(session: any): any {
+  return {
+    sessionId: session.sessionId,
+    scene: session.scene,
+    startedAt: session.startedAt,
+    stoppedAt: session.stoppedAt,
+    durationMs: session.durationMs,
+    sampleRate: session.sampleRate,
+    channels: session.channels,
+    bitrate: session.bitrate,
+    frameCount: session.frameCount,
+    lostFrames: session.lostFrames,
+    outOfOrderFrames: session.outOfOrderFrames,
+    badFrames: session.badFrames,
+    opusPayloadBytes: session.opusPayloadBytes,
+    framedBytes: session.framedBytes,
+    opusRawPath: session.opusRawPath,
+    framesPath: session.framesPath,
+    recordChannel: session.recordChannel,
+    packetLength: session.packetLength
+  }
+}
+
+function emitRecordingProgress(session: any, force: boolean = false): void {
+  const now = new Date().getTime()
+  if (!force && now - Number(session.lastProgressAt) < RECORDING_PROGRESS_THROTTLE_MS) {
+    return
+  }
+  session.lastProgressAt = now
+  const event = {
+    sessionId: session.sessionId,
+    durationMs: session.durationMs,
+    frameCount: session.frameCount,
+    lostFrames: session.lostFrames,
+    outOfOrderFrames: session.outOfOrderFrames,
+    badFrames: session.badFrames,
+    sampleRate: session.sampleRate,
+    channels: session.channels,
+    bitrate: session.bitrate,
+    flash: false,
+    source: 'realtime'
+  }
+  recordingProgressCallbacks.forEach((callback) => {
+    callback(event)
+  })
+}
+
+function emitDecodeProgress(event: any): void {
+  decodeProgressCallbacks.forEach((callback) => {
+    callback(event)
+  })
+}
+
+function completeRecordingCommand(request: any, value: any | null): void {
+  if (request == null || request.completed == true) {
+    return
+  }
+  clearRecordingCommandTimeout()
+  request.completed = true
+  if (pendingRecordingCommand == request) {
+    pendingRecordingCommand = null
+  }
+  request.resolve(value)
+}
+
+function startRecordingCommandTimeout(request: any): void {
+  clearRecordingCommandTimeout()
+  recordingCommandTimeoutId = setTimeout(() => {
+    if (pendingRecordingCommand != request || request.completed == true) {
+      return
+    }
+    rejectRecordingCommand(
+      request,
+      makeError('recording_command_timeout', '录音协议命令超时', 'recording', true, {
+        kind: request.kind,
+        timeoutMs: DEFAULT_RECORDING_COMMAND_TIMEOUT_MS,
+        generation: request.generation
+      })
+    )
+  }, DEFAULT_RECORDING_COMMAND_TIMEOUT_MS)
+}
+
+function ensureRecordingReady(): OleapBleNativeError | null {
+  const initError = ensureInitialized()
+  if (initError != null) {
+    return initError
+  }
+  if (connectedGatt == null || connectedDeviceId == null) {
+    return makeError('device_not_connected', '尚未连接 Oleap 设备', 'connection', true)
+  }
+  if (recordWriteChar == null || recordNotifyChar == null || enablingNotifications) {
+    return makeError('record_channel_not_ready', '录音协议通道尚未就绪', 'recording', true, channelReadySnapshot())
+  }
+  return null
+}
+
+function markRecordingFileWriteError(session: any, error: any): void {
+  if (session.fileWriteError != null) {
+    return
+  }
+  session.fileWriteError = `${error}`
+  emitError(makeError('recording_file_write_failed', '录音文件写入失败', 'recording', true, {
+    sessionId: session.sessionId,
+    error: session.fileWriteError,
+    opusRawPath: session.opusRawPath,
+    framesPath: session.framesPath
+  }))
+}
+
+function updateRecordingIndexStats(session: any, dataIndex: number): void {
+  if (session.lastIndex == null) {
+    session.lastIndex = dataIndex
+    return
+  }
+  const expected = (Number(session.lastIndex) + 1) & 0xffff
+  if (dataIndex != expected) {
+    const forwardGap = (dataIndex - expected + 65536) % 65536
+    if (forwardGap > 0 && forwardGap < 32768) {
+      session.lostFrames = Number(session.lostFrames) + forwardGap
+    } else {
+      session.outOfOrderFrames = Number(session.outOfOrderFrames) + 1
+    }
+  }
+  session.lastIndex = dataIndex
+}
+
+function handleRecordingFrames(response: any): void {
+  const session = recordingSession
+  if (session == null) {
+    pushDiagnostic('recording_frames_without_session', {
+      frameCount: response.frames.length,
+      badFrames: response.badFrames
+    })
+    return
+  }
+  const payloadBatch = new Array<number>()
+  const rawBatch = new Array<number>()
+  const frames = response.frames as Array<any>
+  for (let index = 0; index < frames.length; index++) {
+    const frame = frames[index]
+    updateRecordingIndexStats(session, Number(frame.dataIndex))
+    session.frameCount = Number(session.frameCount) + 1
+    session.durationMs = Number(session.durationMs) + Number(frame.frameTimeMs)
+    session.channels = Number(frame.channels)
+    session.bitrate = Number(frame.bitrate)
+    const payload = frame.payload as Array<number>
+    const rawFrame = frame.rawFrame as Array<number>
+    for (let payloadIndex = 0; payloadIndex < payload.length; payloadIndex++) {
+      payloadBatch.push(payload[payloadIndex] & 0xff)
+    }
+    for (let rawIndex = 0; rawIndex < rawFrame.length; rawIndex++) {
+      rawBatch.push(rawFrame[rawIndex] & 0xff)
+    }
+    session.opusPayloadBytes = Number(session.opusPayloadBytes) + payload.length
+    session.framedBytes = Number(session.framedBytes) + rawFrame.length
+  }
+  session.badFrames = Number(session.badFrames) + Number(response.badFrames)
+  if (payloadBatch.length > 0 || rawBatch.length > 0) {
+    try {
+      appendBytesToOutputStream(session.opusRawStream, payloadBatch)
+      appendBytesToOutputStream(session.framesStream, rawBatch)
+    } catch (error) {
+      markRecordingFileWriteError(session, error)
+    }
+  }
+  pushDiagnostic('recording_frames_received', {
+    sessionId: session.sessionId,
+    frameCount: frames.length,
+    badFrames: response.badFrames,
+    totalFrames: session.frameCount,
+    durationMs: session.durationMs
+  })
+  emitRecordingProgress(session)
+}
+
+function handleRecordingStartResponse(response: any): void {
+  const request = pendingRecordingCommand
+  if (request == null || request.kind != 'start') {
+    pushDiagnostic('unexpected_recording_start_response', response)
+    if (response.startReason == 0) {
+      writeRecordBytes(buildRecordingCommand(RECORDING_COMMAND_STOP, [1]), false)
+        .catch((writeError) => {
+          pushDiagnostic('recording_late_start_cleanup_failed', { error: `${writeError}` })
+        })
+    }
+    return
+  }
+  if (response.startReason != 0) {
+    rejectRecordingCommand(
+      request,
+      makeError('recording_start_rejected', '设备拒绝启动录音', 'recording', true, response)
+    )
+    return
+  }
+  try {
+    const session = createRecordingSession(request.scene, response)
+    recordingSession = session
+    pushDiagnostic('recording_session_started', recordingSessionSummary(session))
+    emitRecordingProgress(session, true)
+    completeRecordingCommand(request, {
+      sessionId: session.sessionId,
+      scene: session.scene,
+      state: 'recording',
+      recordChannel: response.recordChannel,
+      packetLength: response.packetLength,
+      sampleRate: session.sampleRate,
+      channels: session.channels
+    })
+  } catch (error) {
+    writeRecordBytes(buildRecordingCommand(RECORDING_COMMAND_STOP, [1]), false)
+      .catch((writeError) => {
+        pushDiagnostic('recording_cleanup_stop_failed', { error: `${writeError}` })
+      })
+    rejectRecordingCommand(
+      request,
+      makeError('recording_file_open_failed', '录音文件创建失败，已尝试停止设备录音', 'recording', true, {
+        error: `${error}`
+      })
+    )
+  }
+}
+
+function handleRecordingStopResponse(response: any): void {
+  const request = pendingRecordingCommand
+  const session = recordingSession
+  if (request == null || request.kind != 'stop') {
+    pushDiagnostic('unexpected_recording_stop_response', response)
+    if (session != null) {
+      session.stoppedAt = nowIso()
+      closeRecordingSessionStreams(session)
+      emitRecordingProgress(session, true)
+      recordingSession = null
+    }
+    return
+  }
+  if (session == null) {
+    rejectRecordingCommand(
+      request,
+      makeError('recording_session_missing', '录音停止响应已收到，但本地 session 不存在', 'recording', true, response)
+    )
+    return
+  }
+  session.stoppedAt = nowIso()
+  closeRecordingSessionStreams(session)
+  emitRecordingProgress(session, true)
+  recordingSession = null
+
+  const summary = recordingSessionSummary(session)
+  summary.stopReason = response.stopReason
+  summary.stopReasonScene = response.stopReasonScene
+  pushDiagnostic('recording_session_stopped', summary)
+
+  if (session.fileWriteError != null) {
+    rejectRecordingCommand(
+      request,
+      makeError('recording_file_write_failed', '录音文件写入失败，无法继续解码', 'recording', true, summary)
+    )
+    return
+  }
+
+  emitDecodeProgress({
+    sessionId: session.sessionId,
+    phase: 'opus_decode_unsupported',
+    progress: 0
+  })
+  summary.requestedFormat = request.format
+  rejectRecordingCommand(
+    request,
+    makeError(
+      'opus_decode_unsupported',
+      '当前 Android UTS 插件尚未集成 libopus，无法输出 WAV/MP3；已保留 OPUS 诊断文件',
+      'recording',
+      true,
+      summary
+    )
+  )
+}
+
 function handleRecordNotify(bytes: Array<number>, generation: number): void {
   if (generation != sessionGeneration) {
     pushDiagnostic('stale_record_notify_ignored', { generation, current: sessionGeneration })
@@ -1347,6 +1962,31 @@ function handleRecordNotify(bytes: Array<number>, generation: number): void {
     length: bytes.length,
     generation
   })
+  try {
+    const response = parseRecordingResponse(bytes)
+    if (response.kind == 'start') {
+      handleRecordingStartResponse(response)
+      return
+    }
+    if (response.kind == 'stop') {
+      handleRecordingStopResponse(response)
+      return
+    }
+    handleRecordingFrames(response)
+  } catch (error) {
+    const maybeError = error as any
+    let nativeError: OleapBleNativeError
+    if (maybeError != null && maybeError.code != null && maybeError.area != null) {
+      nativeError = maybeError as OleapBleNativeError
+    } else {
+      nativeError = makeError('recording_protocol_error', '录音协议解析失败', 'recording', true, {
+        error: `${error}`,
+        length: bytes.length,
+        head: bytesToHex(bytes)
+      })
+    }
+    emitError(nativeError)
+  }
 }
 
 function descriptorForNotify(characteristic: BluetoothGattCharacteristic | null): BluetoothGattDescriptor | null {
@@ -2134,11 +2774,144 @@ export function syncAppTime(): Promise<void> {
 }
 
 export function startRecording(options: any | null = null): Promise<any> {
-  return notImplemented<any>('recording_not_ready', '录音协议将在 P3 实现', 'recording')
+  const readyError = ensureRecordingReady()
+  if (readyError != null) {
+    return rejectWith<any>(readyError)
+  }
+  if (recordingSession != null) {
+    return rejectWith<any>(
+      makeError('recording_already_active', '已有实时录音正在进行', 'recording', true, {
+        sessionId: recordingSession.sessionId
+      })
+    )
+  }
+  if (pendingRecordingCommand != null) {
+    return rejectWith<any>(
+      makeError('recording_command_pending', '已有录音协议命令正在等待响应', 'recording', true, {
+        kind: pendingRecordingCommand.kind
+      })
+    )
+  }
+
+  let scene: any
+  try {
+    scene = recordingSceneCommandOf(options == null ? null : options.scene)
+  } catch (error) {
+    const maybeError = error as any
+    if (maybeError != null && maybeError.code != null && maybeError.area != null) {
+      return rejectWith<any>(maybeError as OleapBleNativeError)
+    }
+    return rejectWith<any>(
+      makeError('invalid_recording_scene', '录音场景不支持', 'recording', false, { error: `${error}` })
+    )
+  }
+
+  return new Promise<any>((resolve, reject) => {
+    const command = buildRecordingCommand(Number(scene.command), [0])
+    const request = {
+      kind: 'start',
+      scene: scene.scene,
+      command,
+      generation: sessionGeneration,
+      completed: false,
+      resolve,
+      reject
+    }
+    pendingRecordingCommand = request
+    startRecordingCommandTimeout(request)
+    pushDiagnostic('recording_start_enqueued', {
+      scene: scene.scene,
+      command: Number(scene.command),
+      generation: sessionGeneration
+    })
+    writeRecordBytes(command, false)
+      .then(() => {
+        pushDiagnostic('recording_start_written', {
+          scene: scene.scene,
+          length: command.length,
+          generation: sessionGeneration
+        })
+      })
+      .catch((error) => {
+        rejectRecordingCommand(
+          request,
+          makeError('recording_write_failed', '录音启动命令写入失败', 'recording', true, {
+            kind: 'start',
+            scene: scene.scene,
+            error: `${error}`
+          })
+        )
+      })
+  })
 }
 
 export function stopRecording(options: any | null = null): Promise<any> {
-  return notImplemented<any>('recording_not_ready', '录音协议将在 P3 实现', 'recording')
+  const readyError = ensureRecordingReady()
+  if (readyError != null) {
+    return rejectWith<any>(readyError)
+  }
+  if (recordingSession == null) {
+    return rejectWith<any>(
+      makeError('recording_not_active', '当前没有正在进行的实时录音', 'recording', true)
+    )
+  }
+  if (pendingRecordingCommand != null) {
+    return rejectWith<any>(
+      makeError('recording_command_pending', '已有录音协议命令正在等待响应', 'recording', true, {
+        kind: pendingRecordingCommand.kind
+      })
+    )
+  }
+
+  let format = 'wav'
+  try {
+    format = requestedRecordingFormatOf(options)
+  } catch (error) {
+    const maybeError = error as any
+    if (maybeError != null && maybeError.code != null && maybeError.area != null) {
+      return rejectWith<any>(maybeError as OleapBleNativeError)
+    }
+    return rejectWith<any>(
+      makeError('invalid_recording_format', '录音输出格式仅支持 wav 或 mp3', 'recording', false, { error: `${error}` })
+    )
+  }
+
+  return new Promise<any>((resolve, reject) => {
+    const command = buildRecordingCommand(RECORDING_COMMAND_STOP, [1])
+    const request = {
+      kind: 'stop',
+      format,
+      command,
+      generation: sessionGeneration,
+      completed: false,
+      resolve,
+      reject
+    }
+    pendingRecordingCommand = request
+    startRecordingCommandTimeout(request)
+    pushDiagnostic('recording_stop_enqueued', {
+      sessionId: recordingSession.sessionId,
+      requestedFormat: format,
+      generation: sessionGeneration
+    })
+    writeRecordBytes(command, false)
+      .then(() => {
+        pushDiagnostic('recording_stop_written', {
+          length: command.length,
+          generation: sessionGeneration
+        })
+      })
+      .catch((error) => {
+        rejectRecordingCommand(
+          request,
+          makeError('recording_write_failed', '录音停止命令写入失败', 'recording', true, {
+            kind: 'stop',
+            sessionId: recordingSession == null ? null : recordingSession.sessionId,
+            error: `${error}`
+          })
+        )
+      })
+  })
 }
 
 export function listFlashRecordings(): Promise<any> {
@@ -2216,6 +2989,17 @@ export function getDiagnostics(): any {
           },
       queueDepth: controlTransactionQueue.length,
       snapshotSize: dpSnapshot.size
+    },
+    recording: {
+      active: recordingSession == null
+        ? null
+        : recordingSessionSummary(recordingSession),
+      pending: pendingRecordingCommand == null
+        ? null
+        : {
+            kind: pendingRecordingCommand.kind,
+            generation: pendingRecordingCommand.generation
+          }
     },
     events: diagnostics.slice()
   }

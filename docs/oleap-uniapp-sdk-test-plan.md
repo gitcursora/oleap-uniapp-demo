@@ -112,6 +112,29 @@ npm run check:p2-control
 - WAV 可播放。
 - 断连时停止 session。
 
+当前静态与 fixture 验收：
+
+```sh
+npm run check:p3-recording
+```
+
+覆盖：
+
+- Android 录音协议占位已移除。
+- start/stop 命令 codec 与 fixture 一致。
+- 启动响应 `0x1280` 和停止响应 `0x0080` 可解析。
+- 单帧和多帧 OPUS notify 可切分。
+- OPUS bitrate、channels、frame time 可计算。
+- realtime session、pending command timeout、断连清理入口存在。
+- OPUS payload 和带头诊断帧写入 App 私有缓存目录。
+- decoder 未集成时返回 `opus_decode_unsupported`，不伪装 WAV 成功。
+
+待 P3-6/P3-7 补齐：
+
+- libopus bridge。
+- WAV writer。
+- 真机 WAV 可播放验证。
+
 ## Phase 4
 
 Flash：

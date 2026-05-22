@@ -1,0 +1,232 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+const root = resolve(new URL('..', import.meta.url).pathname)
+const androidIndex = readFileSync(
+  resolve(root, 'uni_modules/oleap-ble-sdk/utssdk/app-android/index.uts'),
+  'utf8'
+)
+
+function fail(message) {
+  throw new Error(message)
+}
+
+function assert(condition, message) {
+  if (!condition) {
+    fail(message)
+  }
+}
+
+function mustContain(source, pattern, label) {
+  if (!source.includes(pattern)) {
+    fail(`Missing ${label}: ${pattern}`)
+  }
+}
+
+function mustNotContain(source, pattern, label) {
+  if (source.includes(pattern)) {
+    fail(`Unexpected ${label}: ${pattern}`)
+  }
+}
+
+function mustMatch(source, pattern, label) {
+  if (!pattern.test(source)) {
+    fail(`Missing ${label}: ${pattern}`)
+  }
+}
+
+const reportPath = resolve(root, 'docs/phase-3-android-recording-acceptance-report.md')
+if (!existsSync(reportPath)) {
+  fail('Missing Phase 3 Android recording acceptance report')
+}
+
+const requiredRecordingStrings = [
+  '0.1.0-p3-recording',
+  'RECORDING_COMMAND_STOP',
+  'RECORDING_COMMAND_MEETING',
+  'RECORDING_RESPONSE_START',
+  'RECORDING_RESPONSE_STOP',
+  'DEFAULT_RECORDING_COMMAND_TIMEOUT_MS',
+  'buildRecordingCommand',
+  'recordingSceneCommandOf',
+  'requestedRecordingFormatOf',
+  'splitRecordingFrames',
+  'parseRecordingResponse',
+  'recordingBitrateOf',
+  'recordingChannelsOf',
+  'recordingFrameTimeMs',
+  'createRecordingSession',
+  'openRecordingSessionFiles',
+  'appendBytesToOutputStream',
+  'closeRecordingSessionStreams',
+  'updateRecordingIndexStats',
+  'handleRecordingStartResponse',
+  'handleRecordingStopResponse',
+  'handleRecordingFrames',
+  'recording_start_enqueued',
+  'recording_session_started',
+  'recording_frames_received',
+  'recording_session_stopped',
+  'opus_decode_unsupported',
+  'FileOutputStream',
+  'oleap-recordings',
+  'onRecordingProgress',
+  'onDecodeProgress'
+]
+
+for (const text of requiredRecordingStrings) {
+  mustContain(androidIndex, text, 'Android recording protocol implementation')
+}
+
+mustMatch(androidIndex, /handleRecordNotify[\s\S]+parseRecordingResponse[\s\S]+handleRecordingFrames/, 'record notify dispatches to recording parser')
+mustMatch(androidIndex, /writeRecordBytes\(command,\s*false\)/, 'recording command writes use record channel')
+mustContain(androidIndex, 'return rejectWith<any>(readyError)', 'recording API validates readiness')
+mustContain(androidIndex, 'recordingCommandTimeoutId', 'recording command timeout state')
+mustNotContain(androidIndex, 'recording_not_ready', 'recording_not_ready placeholder')
+
+const fixtures = {
+  startMeeting: readHexFixture('recording/start_meeting.hex'),
+  stopRecording: readHexFixture('recording/stop_recording.hex'),
+  startResponse: readHexFixture('recording/start_response_success.hex'),
+  stopResponse: readHexFixture('recording/stop_response_app.hex'),
+  singleFrame: readHexFixture('recording/opus_notify_single_frame.hex'),
+  twoFrames: readHexFixture('recording/opus_notify_two_frames.hex')
+}
+
+assertBytesEqual(buildRecordingCommand(0x0181, [0]), fixtures.startMeeting, 'start meeting command mismatch')
+assertBytesEqual(buildRecordingCommand(0x0081, [1]), fixtures.stopRecording, 'stop recording command mismatch')
+
+const start = decodeRecordingResponse(fixtures.startResponse)
+assert(start.kind === 'start', 'start fixture must decode as start response')
+assert(start.startReason === 0, 'start fixture startReason must be success')
+assert(start.recordChannel === 1, 'start fixture recordChannel must be 1')
+assert(start.packetLength === 80, 'start fixture packetLength must be 80')
+
+const stop = decodeRecordingResponse(fixtures.stopResponse)
+assert(stop.kind === 'stop', 'stop fixture must decode as stop response')
+assert(stop.stopReason === 1, 'stop fixture stopReason must be app stop')
+assert(stop.stopReasonScene === 1, 'stop fixture scene must be meeting')
+
+const single = splitFrames(fixtures.singleFrame)
+assert(single.frames.length === 1, 'single OPUS notify must contain one frame')
+assert(single.badFrames === 0, 'single OPUS notify must not report bad frames')
+assert(single.frames[0].frameLen === 4, 'single frame length mismatch')
+assert(single.frames[0].dataIndex === 1, 'single frame index mismatch')
+assert(single.frames[0].bitrate === 32000, 'single frame bitrate mismatch')
+assert(single.frames[0].channels === 1, 'single frame channels mismatch')
+assertBytesEqual(single.frames[0].payload, [0xf8, 0xff, 0xfe, 0xfd], 'single frame payload mismatch')
+
+const multiple = splitFrames(fixtures.twoFrames)
+assert(multiple.frames.length === 2, 'multi OPUS notify must contain two frames')
+assert(multiple.badFrames === 0, 'multi OPUS notify must not report bad frames')
+assert(multiple.frames[0].dataIndex === 1, 'multi frame first index mismatch')
+assert(multiple.frames[1].dataIndex === 2, 'multi frame second index mismatch')
+assertBytesEqual(multiple.frames[1].payload, [0xf7, 0xff, 0xfe, 0xfc], 'multi frame payload mismatch')
+
+console.log('P3 Android recording check passed')
+
+function readHexFixture(relativePath) {
+  const fullPath = resolve(root, 'uni_modules/oleap-ble-sdk/test-fixtures', relativePath)
+  const text = readFileSync(fullPath, 'utf8')
+  return text
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => Number.parseInt(part, 16))
+}
+
+function assertBytesEqual(actual, expected, message) {
+  assert(actual.length === expected.length, `${message}: length ${actual.length} !== ${expected.length}`)
+  for (let index = 0; index < expected.length; index++) {
+    assert(actual[index] === expected[index], `${message}: byte ${index} ${actual[index]} !== ${expected[index]}`)
+  }
+}
+
+function readUint16Le(bytes, offset) {
+  return bytes[offset] | (bytes[offset + 1] << 8)
+}
+
+function readUint16Be(bytes, offset) {
+  return (bytes[offset] << 8) | bytes[offset + 1]
+}
+
+function buildRecordingCommand(command, payload) {
+  return [
+    (command >> 8) & 0xff,
+    command & 0xff,
+    payload.length & 0xff,
+    (payload.length >> 8) & 0xff,
+    ...payload.map((byte) => byte & 0xff)
+  ]
+}
+
+function decodeRecordingResponse(bytes) {
+  const command = readUint16Be(bytes, 0)
+  const declaredLength = readUint16Le(bytes, 2)
+  assert(bytes.length >= 4 + declaredLength, 'recording response length mismatch')
+  if (command === 0x1280) {
+    assert(declaredLength >= 4, 'start response too short')
+    return {
+      kind: 'start',
+      startReason: bytes[4],
+      recordChannel: bytes[5],
+      packetLength: readUint16Le(bytes, 6)
+    }
+  }
+  if (command === 0x0080) {
+    assert(declaredLength >= 2, 'stop response too short')
+    return {
+      kind: 'stop',
+      stopReason: bytes[4],
+      stopReasonScene: bytes[5]
+    }
+  }
+  return { kind: 'frames' }
+}
+
+function bitrateOf(config) {
+  const key = (config >> 4) & 0x0f
+  if (key === 1) return 24000
+  if (key === 2) return 16000
+  return 32000
+}
+
+function channelsOf(config) {
+  const channels = config & 0x0f
+  return channels === 0 ? 1 : channels
+}
+
+function splitFrames(bytes) {
+  const frames = []
+  let offset = 0
+  let badFrames = 0
+  while (offset < bytes.length) {
+    if (bytes.length - offset < 4) {
+      badFrames += 1
+      break
+    }
+    const frameLen = bytes[offset]
+    if (frameLen <= 0) {
+      badFrames += 1
+      break
+    }
+    const end = offset + 4 + frameLen
+    if (end > bytes.length) {
+      badFrames += 1
+      break
+    }
+    const opusConfig = bytes[offset + 1]
+    const bitrate = bitrateOf(opusConfig)
+    frames.push({
+      frameLen,
+      opusConfig,
+      dataIndex: readUint16Le(bytes, offset + 2),
+      bitrate,
+      channels: channelsOf(opusConfig),
+      frameTimeMs: Math.max(1, Math.floor(frameLen * 8000 / bitrate)),
+      payload: bytes.slice(offset + 4, end)
+    })
+    offset = end
+  }
+  return { frames, badFrames }
+}
