@@ -20,9 +20,9 @@
   - `NSBluetoothAlwaysUsageDescription`。
   - `NSBluetoothPeripheralUsageDescription`。
 - iOS 录音和 Flash 当前保留明确边界：
-  - `startRecording` / `stopRecording` 返回 `ios_recording_not_ready`。
+  - `startRecording` / `stopRecording` 已在后续 P5 录音切片推进为真实录音协议和帧落盘。
   - `listFlashRecordings` / `downloadFlashRecording` 返回 `ios_flash_not_ready`。
-  - record notify 在 P5 第一切片仅记录诊断，不伪装输出文件。
+  - WAV/MP3 decoder 未接入前，停止录音返回 `ios_audio_decode_not_ready`，不伪装输出文件。
 
 ## 验收命令
 
@@ -38,7 +38,7 @@ npm run check:p5-ios
 
 ## 风险与边界
 
-- 当前 P5 只覆盖 iOS host/control，不承诺 iOS WAV/MP3 文件输出。
+- 当前 P5 已覆盖 iOS host/control 与实时录音协议第一切片，不承诺 iOS WAV/MP3 文件输出。
 - iOS `Data` 与 UTS typed array 桥接、CoreBluetooth delegate 方法签名仍需 HBuilderX 真机编译验证。
 - iOS 不新增后台 BLE capability，避免 App 行为和审核面扩大。
 - 下一切片应接入 iOS OPUS decoder/WAV writer，并复用 Android P3/P4 的录音和 Flash session 语义。

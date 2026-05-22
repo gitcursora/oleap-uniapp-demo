@@ -6,6 +6,7 @@ const iosIndex = read('uni_modules/oleap-ble-sdk/utssdk/app-ios/index.uts')
 const iosConfig = read('uni_modules/oleap-ble-sdk/utssdk/app-ios/config.json')
 const iosPlist = read('uni_modules/oleap-ble-sdk/utssdk/app-ios/info.plist')
 read('docs/phase-5-ios-host-acceptance-report.md')
+read('docs/phase-5-ios-recording-acceptance-report.md')
 
 function fail(message) {
   throw new Error(message)
@@ -49,7 +50,7 @@ for (const text of [
   'CBPeripheralDelegate',
   'CBCharacteristicWriteType',
   'CoreBluetooth',
-  '0.1.0-p5-ios-host',
+  '0.1.0-p5-ios-recording',
   'COMMUNICATION_SERVICE_UUID',
   'COMMUNICATION_NOTIFY_UUID',
   'COMMUNICATION_WRITE_UUID',
@@ -121,32 +122,80 @@ for (const text of [
 }
 
 for (const text of [
-  'ios_recording_not_ready',
   'ios_flash_not_ready',
-  'record_notify_ignored_ios_p5'
+  'ios_audio_decode_not_ready'
 ]) {
-  mustContain(iosIndex, text, 'explicit iOS P5 unsupported boundary')
+  mustContain(iosIndex, text, 'explicit iOS P5 boundary')
+}
+
+for (const text of [
+  'RECORDING_COMMAND_STOP',
+  'RECORDING_COMMAND_MEETING',
+  'RECORDING_RESPONSE_START',
+  'RECORDING_RESPONSE_STOP',
+  'RECORDING_FRAME_HEADER_LENGTH',
+  'DEFAULT_RECORDING_COMMAND_TIMEOUT_MS',
+  'buildRecordingCommand',
+  'recordingSceneCommandOf',
+  'requestedRecordingFormatOf',
+  'splitRecordingFrames',
+  'parseRecordingResponse',
+  'recordingBitrateOf',
+  'recordingChannelsOf',
+  'recordingFrameTimeMs',
+  'createRecordingSession',
+  'openRecordingSessionFiles',
+  'appendBytesToFileHandle',
+  'closeRecordingSessionStreams',
+  'updateRecordingIndexStats',
+  'handleRecordingStartResponse',
+  'handleRecordingStopResponse',
+  'handleRecordingFrames',
+  'recording_start_enqueued',
+  'recording_session_started',
+  'recording_frames_received',
+  'recording_session_stopped',
+  'ios_decoder_not_ready',
+  'onRecordingProgress',
+  'onDecodeProgress',
+  'oleap-recordings',
+  'opusRawPath',
+  'framesPath'
+]) {
+  mustContain(iosIndex, text, 'iOS recording protocol implementation')
 }
 
 mustNotContain(iosIndex, 'unsupportedPlatformError', 'unsupported platform stub import')
 mustNotContain(iosIndex, 'unsupportedPromise', 'unsupported platform stub implementation')
+mustNotContain(iosIndex, 'record_notify_ignored_ios_p5', 'old iOS record notify ignore boundary')
+mustNotContain(iosIndex, 'ios_recording_not_ready', 'old iOS recording not-ready placeholder')
 mustNotContain(iosIndex, 'toArrayBuffer', 'JS-style Data bridge in iOS native implementation')
-mustContain(iosConfig, 'P5 iOS host/control slice', 'iOS config status note')
+mustContain(iosConfig, 'realtime recording protocol slice', 'iOS config status note')
 mustContain(iosPlist, 'NSBluetoothAlwaysUsageDescription', 'iOS Bluetooth always usage description')
 mustContain(iosPlist, 'NSBluetoothPeripheralUsageDescription', 'iOS Bluetooth peripheral usage description')
 
 mustMatch(iosIndex, /peripheral[\s\S]+didUpdateValueFor[\s\S]+handleControlIncomingFrame/, 'iOS communication notify dispatches to control parser')
+mustMatch(iosIndex, /peripheral[\s\S]+didUpdateValueFor[\s\S]+handleRecordNotify/, 'iOS record notify dispatches to recording parser')
 mustMatch(iosIndex, /centralManager[\s\S]+didConnect[\s\S]+discoverServices/, 'iOS didConnect discovers services')
 mustMatch(iosIndex, /didDiscoverCharacteristicsFor[\s\S]+setNotifyValue\(true[\s\S]+finishConnectionIfReady/, 'iOS characteristic discovery enables notify and checks readiness')
 mustMatch(iosIndex, /didUpdateNotificationStateFor[\s\S]+notifyReadyCount[\s\S]+finishConnectionIfReady/, 'iOS notify state completes pending connection')
 mustMatch(iosIndex, /connect\(options[\s\S]+centralManager\?\.connect\(peripheral/, 'iOS exported connect starts central connection')
+mustMatch(iosIndex, /startRecording\(options[\s\S]+buildRecordingCommand\(Number\(scene.command\), \[0\][\s\S]+writeRecordBytes\(command,\s*false\)/, 'iOS startRecording writes start command to record channel')
+mustMatch(iosIndex, /stopRecording\(options[\s\S]+buildRecordingCommand\(RECORDING_COMMAND_STOP, \[1\][\s\S]+writeRecordBytes\(command,\s*false\)/, 'iOS stopRecording writes stop command to record channel')
+mustMatch(iosIndex, /handleRecordingStopResponse[\s\S]+closeRecordingSessionStreams[\s\S]+ios_audio_decode_not_ready/, 'iOS stop response closes frames and reports decoder boundary')
 
 const crcTable = buildCrcTable()
 
 const fixtures = {
   queryBattery: readHexFixture('control/query_battery.hex'),
   writeEq: readHexFixture('control/write_eq_high_bass.hex'),
-  reportBattery: readHexFixture('control/report_battery.hex')
+  reportBattery: readHexFixture('control/report_battery.hex'),
+  startMeeting: readHexFixture('recording/start_meeting.hex'),
+  stopRecording: readHexFixture('recording/stop_recording.hex'),
+  startResponse: readHexFixture('recording/start_response_success.hex'),
+  stopResponse: readHexFixture('recording/stop_response_app.hex'),
+  singleFrame: readHexFixture('recording/opus_notify_single_frame.hex'),
+  twoFrames: readHexFixture('recording/opus_notify_two_frames.hex')
 }
 
 const query = decodeFrame(fixtures.queryBattery)
@@ -168,7 +217,37 @@ const reportDp = decodeDp(report.payload.commandPayload.slice(4))
 assert(reportDp.id === 0x03, 'battery report fixture must target DP 0x03')
 assert(reportDp.type === 0x02, 'battery report fixture must use number type')
 
-console.log('P5 iOS host/control check passed')
+assertBytesEqual(buildRecordingCommand(0x0181, [0]), fixtures.startMeeting, 'iOS start meeting command mismatch')
+assertBytesEqual(buildRecordingCommand(0x0081, [1]), fixtures.stopRecording, 'iOS stop recording command mismatch')
+
+const start = decodeRecordingResponse(fixtures.startResponse)
+assert(start.kind === 'start', 'iOS start fixture must decode as start response')
+assert(start.startReason === 0, 'iOS start fixture startReason must be success')
+assert(start.recordChannel === 1, 'iOS start fixture recordChannel must be 1')
+assert(start.packetLength === 80, 'iOS start fixture packetLength must be 80')
+
+const stop = decodeRecordingResponse(fixtures.stopResponse)
+assert(stop.kind === 'stop', 'iOS stop fixture must decode as stop response')
+assert(stop.stopReason === 1, 'iOS stop fixture stopReason must be app stop')
+assert(stop.stopReasonScene === 1, 'iOS stop fixture scene must be meeting')
+
+const single = splitFrames(fixtures.singleFrame)
+assert(single.frames.length === 1, 'iOS single OPUS notify must contain one frame')
+assert(single.badFrames === 0, 'iOS single OPUS notify must not report bad frames')
+assert(single.frames[0].frameLen === 4, 'iOS single frame length mismatch')
+assert(single.frames[0].dataIndex === 1, 'iOS single frame index mismatch')
+assert(single.frames[0].bitrate === 32000, 'iOS single frame bitrate mismatch')
+assert(single.frames[0].channels === 1, 'iOS single frame channels mismatch')
+assertBytesEqual(single.frames[0].payload, [0xf8, 0xff, 0xfe, 0xfd], 'iOS single frame payload mismatch')
+
+const multiple = splitFrames(fixtures.twoFrames)
+assert(multiple.frames.length === 2, 'iOS multi OPUS notify must contain two frames')
+assert(multiple.badFrames === 0, 'iOS multi OPUS notify must not report bad frames')
+assert(multiple.frames[0].dataIndex === 1, 'iOS multi frame first index mismatch')
+assert(multiple.frames[1].dataIndex === 2, 'iOS multi frame second index mismatch')
+assertBytesEqual(multiple.frames[1].payload, [0xf7, 0xff, 0xfe, 0xfc], 'iOS multi frame payload mismatch')
+
+console.log('P5 iOS host/control/recording check passed')
 
 function readHexFixture(relativePath) {
   return read(`uni_modules/oleap-ble-sdk/test-fixtures/${relativePath}`)
@@ -180,6 +259,10 @@ function readHexFixture(relativePath) {
 
 function readUint16Le(bytes, offset) {
   return bytes[offset] | (bytes[offset + 1] << 8)
+}
+
+function readUint16Be(bytes, offset) {
+  return (bytes[offset] << 8) | bytes[offset + 1]
 }
 
 function readUint32Le(bytes, offset) {
@@ -244,4 +327,91 @@ function decodeDp(bytes) {
     type: bytes[1],
     raw: bytes.slice(4, 4 + length)
   }
+}
+
+function assertBytesEqual(actual, expected, message) {
+  assert(actual.length === expected.length, `${message}: length ${actual.length} !== ${expected.length}`)
+  for (let index = 0; index < expected.length; index++) {
+    assert(actual[index] === expected[index], `${message}: byte ${index} ${actual[index]} !== ${expected[index]}`)
+  }
+}
+
+function buildRecordingCommand(command, payload) {
+  return [
+    (command >> 8) & 0xff,
+    command & 0xff,
+    payload.length & 0xff,
+    (payload.length >> 8) & 0xff,
+    ...payload.map((byte) => byte & 0xff)
+  ]
+}
+
+function decodeRecordingResponse(bytes) {
+  const command = readUint16Be(bytes, 0)
+  const declaredLength = readUint16Le(bytes, 2)
+  assert(bytes.length >= 4 + declaredLength, 'iOS recording response length mismatch')
+  if (command === 0x1280) {
+    assert(declaredLength >= 4, 'iOS start response too short')
+    return {
+      kind: 'start',
+      startReason: bytes[4],
+      recordChannel: bytes[5],
+      packetLength: readUint16Le(bytes, 6)
+    }
+  }
+  if (command === 0x0080) {
+    assert(declaredLength >= 2, 'iOS stop response too short')
+    return {
+      kind: 'stop',
+      stopReason: bytes[4],
+      stopReasonScene: bytes[5]
+    }
+  }
+  return { kind: 'frames' }
+}
+
+function bitrateOf(config) {
+  const key = (config >> 4) & 0x0f
+  if (key === 1) return 24000
+  if (key === 2) return 16000
+  return 32000
+}
+
+function channelsOf(config) {
+  const channels = config & 0x0f
+  return channels === 0 ? 1 : channels
+}
+
+function splitFrames(bytes) {
+  const frames = []
+  let offset = 0
+  let badFrames = 0
+  while (offset < bytes.length) {
+    if (bytes.length - offset < 4) {
+      badFrames += 1
+      break
+    }
+    const frameLen = bytes[offset]
+    if (frameLen <= 0) {
+      badFrames += 1
+      break
+    }
+    const end = offset + 4 + frameLen
+    if (end > bytes.length) {
+      badFrames += 1
+      break
+    }
+    const opusConfig = bytes[offset + 1]
+    frames.push({
+      frameLen,
+      opusConfig,
+      dataIndex: readUint16Le(bytes, offset + 2),
+      bitrate: bitrateOf(opusConfig),
+      channels: channelsOf(opusConfig),
+      payload: bytes.slice(offset + 4, end),
+      rawFrame: bytes.slice(offset, end)
+    })
+    offset = end
+  }
+  return { frames, badFrames }
 }
