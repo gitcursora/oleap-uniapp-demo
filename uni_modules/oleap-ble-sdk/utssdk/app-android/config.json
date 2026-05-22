@@ -1,0 +1,8 @@
+{
+  "minSdkVersion": 23,
+  "abiFilters": [
+    "arm64-v8a"
+  ],
+  "note": "Phase 0 skeleton. Native BLE and libopus bridge are implemented in later phases."
+}
+

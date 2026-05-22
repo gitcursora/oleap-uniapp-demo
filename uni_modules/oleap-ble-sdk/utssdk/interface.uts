@@ -1,0 +1,144 @@
+export type OleapBleLogLevel = 'debug' | 'info' | 'warn' | 'error'
+export type OleapRecordingFormat = 'wav' | 'mp3'
+export type OleapRecordingScene = 'meeting' | 'call' | 'media' | 'ambient'
+
+export type OleapBleInitOptions = {
+  mock?: boolean
+  logLevel?: OleapBleLogLevel
+}
+
+export type OleapDevice = {
+  deviceId: string
+  name: string
+  rssi: number
+  manufacturerDataHex?: string
+}
+
+export type OleapConnectionState = {
+  connected: boolean
+  device?: OleapDevice | null
+}
+
+export type OleapBluetoothState = {
+  supported: boolean
+  enabled: boolean
+  mock?: boolean
+}
+
+export type OleapPermissionResult = {
+  bluetooth: boolean
+  location?: boolean
+  mock?: boolean
+}
+
+export type OleapDpReport = {
+  dpId: number
+  name: string
+  value: any
+  timestamp: string
+}
+
+export type OleapEqModeStatus = {
+  modeCount: number
+  currentMode: number
+  raw?: Array<number>
+}
+
+export type OleapRecordState = {
+  state: number
+  recordedFrameCount: number
+  durationMs: number
+}
+
+export type OleapFlashCapacity = {
+  totalBlocks: number
+  freeBlocks: number
+  totalBytes: number
+  freeBytes: number
+}
+
+export type OleapRecordingProgress = {
+  sessionId: string
+  durationMs?: number
+  frameCount?: number
+  lostFrames?: number
+  outOfOrderFrames?: number
+  flash?: boolean
+  progress?: number
+  fileId?: number
+}
+
+export type OleapDecodeProgress = {
+  sessionId: string
+  phase: string
+  progress?: number
+}
+
+export type OleapRecordingResult = {
+  filePath: string
+  format: OleapRecordingFormat
+  durationMs: number
+  sampleRate: number
+  channels: number
+  frameCount: number
+  lostFrames: number
+  outOfOrderFrames: number
+  size: number
+  source?: string
+  fileId?: number
+}
+
+export type OleapFlashRecordingInfo = {
+  fileId: number
+  fileLength: number
+  recordType: number
+  channels: number
+  sampleRate: number
+  bitRate: number
+  recordTime?: string
+}
+
+export type OleapBleError = {
+  code: string
+  message: string
+  area: string
+  recoverable: boolean
+  details?: any
+}
+
+export type OleapBleUnsubscribe = () => void
+
+export type OleapBleCallback<T> = (event: T) => void
+
+export declare function init(options?: OleapBleInitOptions): Promise<void>
+export declare function requestPermissions(): Promise<OleapPermissionResult>
+export declare function getBluetoothState(): Promise<OleapBluetoothState>
+export declare function startScan(options?: any): Promise<void>
+export declare function stopScan(): Promise<void>
+export declare function connect(options: any): Promise<OleapDevice>
+export declare function disconnect(): Promise<void>
+export declare function getConnectionState(): OleapConnectionState
+export declare function getBattery(): Promise<number>
+export declare function getSn(): Promise<string>
+export declare function getDeviceName(): Promise<string>
+export declare function getFirmwareVersion(): Promise<string>
+export declare function getHardwareVersion(): Promise<string>
+export declare function getEqMode(): Promise<OleapEqModeStatus>
+export declare function setEqMode(options: any): Promise<OleapEqModeStatus>
+export declare function getRecordState(): Promise<OleapRecordState>
+export declare function getFlashCapacity(): Promise<OleapFlashCapacity>
+export declare function syncAppTime(): Promise<void>
+export declare function startRecording(options?: any): Promise<any>
+export declare function stopRecording(options?: any): Promise<OleapRecordingResult>
+export declare function listFlashRecordings(): Promise<Array<OleapFlashRecordingInfo>>
+export declare function downloadFlashRecording(options: any): Promise<OleapRecordingResult>
+export declare function stopFlashDownload(): Promise<void>
+export declare function onDeviceFound(callback: OleapBleCallback<OleapDevice>): OleapBleUnsubscribe
+export declare function onConnectionChanged(callback: OleapBleCallback<OleapConnectionState>): OleapBleUnsubscribe
+export declare function onDpReport(callback: OleapBleCallback<OleapDpReport>): OleapBleUnsubscribe
+export declare function onRecordingProgress(callback: OleapBleCallback<OleapRecordingProgress>): OleapBleUnsubscribe
+export declare function onDecodeProgress(callback: OleapBleCallback<OleapDecodeProgress>): OleapBleUnsubscribe
+export declare function onError(callback: OleapBleCallback<OleapBleError>): OleapBleUnsubscribe
+export declare function getDiagnostics(): any
+export declare function clearDiagnostics(): void
+

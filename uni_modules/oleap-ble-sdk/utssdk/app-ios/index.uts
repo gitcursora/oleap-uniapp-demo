@@ -1,0 +1,128 @@
+import { unsupportedPlatformError } from '../unierror.uts'
+
+function unsupportedPromise<T>(): Promise<T> {
+  return Promise.reject<T>(unsupportedPlatformError())
+}
+
+export function init(options: any | null = null): Promise<void> {
+  return unsupportedPromise<void>()
+}
+
+export function requestPermissions(): Promise<any> {
+  return unsupportedPromise<any>()
+}
+
+export function getBluetoothState(): Promise<any> {
+  return unsupportedPromise<any>()
+}
+
+export function startScan(options: any | null = null): Promise<void> {
+  return unsupportedPromise<void>()
+}
+
+export function stopScan(): Promise<void> {
+  return unsupportedPromise<void>()
+}
+
+export function connect(options: any): Promise<any> {
+  return unsupportedPromise<any>()
+}
+
+export function disconnect(): Promise<void> {
+  return unsupportedPromise<void>()
+}
+
+export function getConnectionState(): any {
+  return { connected: false, device: null }
+}
+
+export function getBattery(): Promise<number> {
+  return unsupportedPromise<number>()
+}
+
+export function getSn(): Promise<string> {
+  return unsupportedPromise<string>()
+}
+
+export function getDeviceName(): Promise<string> {
+  return unsupportedPromise<string>()
+}
+
+export function getFirmwareVersion(): Promise<string> {
+  return unsupportedPromise<string>()
+}
+
+export function getHardwareVersion(): Promise<string> {
+  return unsupportedPromise<string>()
+}
+
+export function getEqMode(): Promise<any> {
+  return unsupportedPromise<any>()
+}
+
+export function setEqMode(options: any): Promise<any> {
+  return unsupportedPromise<any>()
+}
+
+export function getRecordState(): Promise<any> {
+  return unsupportedPromise<any>()
+}
+
+export function getFlashCapacity(): Promise<any> {
+  return unsupportedPromise<any>()
+}
+
+export function syncAppTime(): Promise<void> {
+  return unsupportedPromise<void>()
+}
+
+export function startRecording(options: any | null = null): Promise<any> {
+  return unsupportedPromise<any>()
+}
+
+export function stopRecording(options: any | null = null): Promise<any> {
+  return unsupportedPromise<any>()
+}
+
+export function listFlashRecordings(): Promise<any> {
+  return unsupportedPromise<any>()
+}
+
+export function downloadFlashRecording(options: any): Promise<any> {
+  return unsupportedPromise<any>()
+}
+
+export function stopFlashDownload(): Promise<void> {
+  return unsupportedPromise<void>()
+}
+
+export function onDeviceFound(callback: any): () => void {
+  return () => {}
+}
+
+export function onConnectionChanged(callback: any): () => void {
+  return () => {}
+}
+
+export function onDpReport(callback: any): () => void {
+  return () => {}
+}
+
+export function onRecordingProgress(callback: any): () => void {
+  return () => {}
+}
+
+export function onDecodeProgress(callback: any): () => void {
+  return () => {}
+}
+
+export function onError(callback: any): () => void {
+  return () => {}
+}
+
+export function getDiagnostics(): any {
+  return { events: [] }
+}
+
+export function clearDiagnostics(): void {}
+

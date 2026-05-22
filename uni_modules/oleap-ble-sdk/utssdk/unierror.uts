@@ -1,0 +1,28 @@
+export type OleapBleErrorArea =
+  'permission' | 'bluetooth' | 'connection' | 'control' | 'recording' | 'flash' | 'decode' | 'sdk'
+
+export class OleapBleNativeError extends Error {
+  code: string
+  area: OleapBleErrorArea
+  recoverable: boolean
+  details: any | null
+
+  constructor(code: string, message: string, area: OleapBleErrorArea, recoverable: boolean = true, details: any | null = null) {
+    super(message)
+    this.code = code
+    this.area = area
+    this.recoverable = recoverable
+    this.details = details
+  }
+}
+
+export function unsupportedPlatformError(): OleapBleNativeError {
+  return new OleapBleNativeError(
+    'unsupported_platform',
+    '当前平台暂未接入 Oleap BLE 原生实现',
+    'sdk',
+    false,
+    null
+  )
+}
+

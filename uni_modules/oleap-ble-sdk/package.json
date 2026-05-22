@@ -1,0 +1,64 @@
+{
+  "id": "oleap-ble-sdk",
+  "displayName": "Oleap BLE SDK",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Oleap headset BLE control, recording, and Flash recording SDK for uni-app teaching demos.",
+  "keywords": [
+    "oleap",
+    "ble",
+    "recording",
+    "uts"
+  ],
+  "repository": "",
+  "engines": {
+    "HBuilderX": ">=4.0"
+  },
+  "dcloudext": {
+    "type": "uts",
+    "sale": {
+      "regular": {
+        "price": "0.00"
+      }
+    },
+    "contact": {
+      "qq": ""
+    }
+  },
+  "uni_modules": {
+    "dependencies": [],
+    "encrypt": [],
+    "platforms": {
+      "cloud": {
+        "tcb": "u",
+        "aliyun": "u"
+      },
+      "client": {
+        "Vue": {
+          "vue2": "u",
+          "vue3": "y"
+        },
+        "App": {
+          "app-vue": "y",
+          "app-nvue": "u"
+        },
+        "H5-mobile": {
+          "Safari": "y",
+          "Android Browser": "y",
+          "微信浏览器(Android)": "y",
+          "QQ浏览器(Android)": "y"
+        },
+        "H5-pc": {
+          "Chrome": "y",
+          "IE": "u",
+          "Edge": "y",
+          "Firefox": "y",
+          "Safari": "y"
+        },
+        "小程序": {
+          "微信": "u"
+        }
+      }
+    }
+  }
+}

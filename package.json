@@ -1,0 +1,14 @@
+{
+  "name": "oleap-uniapp-demo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Oleap BLE SDK teaching demo for uni-app.",
+  "type": "module",
+  "scripts": {
+    "check:phase0": "node scripts/check-phase0.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
+

@@ -1,0 +1,74 @@
+# Oleap UniApp BLE SDK Test Plan
+
+状态：Phase 0 已执行静态与 mock 验收，后续 Phase 按本计划扩展真机测试。
+
+## Phase 0
+
+命令：
+
+```sh
+npm run check:phase0
+```
+
+覆盖：
+
+- 必需项目文件存在。
+- `pages.json` 中的页面文件存在。
+- 页面均通过 SDK facade import。
+- 页面包含 `onUnload` 订阅清理。
+- 控制、录音、Flash fixture 文件存在且是合法 hex。
+- mock 扫描能发出设备。
+- mock 连接后能读取电量。
+- mock 实时录音能产生进度并返回 WAV 路径。
+- mock Flash 列表和下载能返回 WAV 路径。
+- 诊断日志有事件。
+
+## Phase 1
+
+Android 真机 BLE Host：
+
+- 权限拒绝和允许。
+- 蓝牙关闭和开启。
+- 扫描设备。
+- 停止扫描。
+- 连接和断开。
+- 服务发现。
+- communication/record notify 订阅。
+- 断开后资源释放。
+
+## Phase 2
+
+控制协议：
+
+- CRC32 fixture。
+- control frame encode/decode。
+- DP TLV encode/decode。
+- 电量、SN、版本、EQ 查询。
+- EQ 写入。
+- 主动上报 ACK。
+- 超时和重试。
+
+## Phase 3
+
+实时录音：
+
+- 启动响应成功。
+- 启动响应拒绝。
+- 单帧和多帧 OPUS notify。
+- 丢包和乱序统计。
+- 停止响应。
+- WAV 可播放。
+- 断连时停止 session。
+
+## Phase 4
+
+Flash：
+
+- 获取文件数量。
+- 获取文件信息。
+- 连续下载。
+- 手动停止下载。
+- 下载后 WAV 可播放。
+- 队首安全删除。
+- 非队首删除拒绝。
+

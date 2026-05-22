@@ -1,0 +1,41 @@
+{
+  "pages": [
+    {
+      "path": "pages/index/index",
+      "style": {
+        "navigationBarTitleText": "Oleap BLE"
+      }
+    },
+    {
+      "path": "pages/device/device",
+      "style": {
+        "navigationBarTitleText": "设备"
+      }
+    },
+    {
+      "path": "pages/record/record",
+      "style": {
+        "navigationBarTitleText": "录音"
+      }
+    },
+    {
+      "path": "pages/flash/flash",
+      "style": {
+        "navigationBarTitleText": "Flash"
+      }
+    },
+    {
+      "path": "pages/transcript/transcript",
+      "style": {
+        "navigationBarTitleText": "转写"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "Oleap",
+    "navigationBarBackgroundColor": "#ffffff",
+    "backgroundColor": "#f6f7f9"
+  }
+}
+

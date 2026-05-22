@@ -1,0 +1,5 @@
+{
+  "deploymentTarget": "13.0",
+  "note": "Phase 0 skeleton. CoreBluetooth and libopus bridge are implemented in later phases."
+}
+

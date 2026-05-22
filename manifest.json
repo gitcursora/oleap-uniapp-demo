@@ -1,0 +1,30 @@
+{
+  "name": "oleap-uniapp-demo",
+  "appid": "__UNI__OLEAPBLE",
+  "description": "Oleap BLE SDK teaching demo",
+  "versionName": "0.1.0",
+  "versionCode": "100",
+  "transformPx": false,
+  "app-plus": {
+    "usingComponents": true,
+    "nvueCompiler": "uni-app",
+    "compilerVersion": 3,
+    "modules": {},
+    "permissions": {
+      "Bluetooth": {
+        "description": "用于连接 Oleap 耳机"
+      }
+    }
+  },
+  "mp-weixin": {
+    "appid": "",
+    "setting": {
+      "urlCheck": false
+    },
+    "usingComponents": true
+  },
+  "h5": {
+    "title": "Oleap BLE Demo"
+  }
+}
+
