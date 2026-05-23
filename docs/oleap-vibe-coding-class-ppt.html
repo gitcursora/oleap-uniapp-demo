@@ -4,6 +4,28 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Oleap Vibe Coding 实战课 | uni-app + Fastify</title>
+<script>
+if ('scrollRestoration' in history) {
+  history.scrollRestoration = 'manual';
+}
+function forceTopWhenNoHash() {
+  if (!location.hash) {
+    window.scrollTo(0, 0);
+  }
+}
+window.addEventListener('DOMContentLoaded', forceTopWhenNoHash);
+window.addEventListener('pageshow', function () {
+  forceTopWhenNoHash();
+  setTimeout(forceTopWhenNoHash, 50);
+  setTimeout(forceTopWhenNoHash, 250);
+});
+window.addEventListener('load', function () {
+  forceTopWhenNoHash();
+  setTimeout(forceTopWhenNoHash, 50);
+  setTimeout(forceTopWhenNoHash, 250);
+  setTimeout(forceTopWhenNoHash, 600);
+});
+</script>
 <style>
 :root {
   --bg: #ffffff;
@@ -659,7 +681,7 @@ tr:last-child td { border-bottom: none; }
       </div>
     </a>
     <div class="topbar-actions">
-      <span class="pill"><span class="pill-dot"></span>2026-05-25 课堂版</span>
+      <span class="pill"><span class="pill-dot"></span>2026-05-24 课堂版</span>
       <button class="icon-btn" id="theme-toggle" aria-label="切换明暗主题">◐</button>
     </div>
   </div>
@@ -671,16 +693,17 @@ tr:last-child td { border-bottom: none; }
     <nav class="side-nav" id="side-nav">
       <a href="#hero"><span class="nav-num">00</span>课程目标</a>
       <a href="#why"><span class="nav-num">01</span>为什么这样做</a>
-      <a href="#architecture"><span class="nav-num">02</span>双项目架构</a>
-      <a href="#agenda"><span class="nav-num">03</span>当天节奏</a>
-      <a href="#morning"><span class="nav-num">04</span>上午任务</a>
-      <a href="#backend"><span class="nav-num">05</span>后端速成</a>
-      <a href="#frontend"><span class="nav-num">06</span>App 联调</a>
-      <a href="#topics"><span class="nav-num">07</span>实战命题</a>
-      <a href="#vibe"><span class="nav-num">08</span>Vibe Coding</a>
-      <a href="#week"><span class="nav-num">09</span>一周开发</a>
-      <a href="#acceptance"><span class="nav-num">10</span>验收答辩</a>
-      <a href="#trouble"><span class="nav-num">11</span>排错地图</a>
+      <a href="#vibe"><span class="nav-num">02</span>Vibe Coding</a>
+      <a href="#ble"><span class="nav-num">03</span>BLE 最小扫盲</a>
+      <a href="#architecture"><span class="nav-num">04</span>双项目架构</a>
+      <a href="#agenda"><span class="nav-num">05</span>当天节奏</a>
+      <a href="#morning"><span class="nav-num">06</span>上午任务</a>
+      <a href="#backend"><span class="nav-num">07</span>后端速成</a>
+      <a href="#frontend"><span class="nav-num">08</span>App 联调</a>
+      <a href="#topics"><span class="nav-num">09</span>实战命题</a>
+      <a href="#week"><span class="nav-num">10</span>一周开发</a>
+      <a href="#acceptance"><span class="nav-num">11</span>验收答辩</a>
+      <a href="#trouble"><span class="nav-num">12</span>排错地图</a>
     </nav>
   </aside>
 
@@ -726,11 +749,176 @@ tr:last-child td { border-bottom: none; }
       </div>
     </section>
 
-    <section id="architecture" class="content-section">
+    <section id="vibe" class="content-section">
       <div class="sec-head">
         <span class="sec-num">// 02</span>
+        <h2>Vibe Coding 工作法：让 AI 参与，但不让 AI 接管</h2>
+        <p class="sec-desc">学生开始动手前，先建立一个可验证的协作节奏：任务切小、上下文说清、运行验证、错误反馈。</p>
+      </div>
+      <div class="divider"></div>
+
+      <div class="flow">
+        <div class="flow-step">
+          <div class="flow-num">1</div>
+          <div class="flow-title">明确目标</div>
+          <div class="flow-desc">先说选题、用户、页面和接口，不直接要完整项目。</div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">2</div>
+          <div class="flow-title">给上下文</div>
+          <div class="flow-desc">说明两个项目、已有 filePath、当前要改哪个文件。</div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">3</div>
+          <div class="flow-title">改一小块</div>
+          <div class="flow-desc">一次只做一个按钮、一个接口、一个页面状态。</div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">4</div>
+          <div class="flow-title">运行验证</div>
+          <div class="flow-desc">AI 写完不是结束，能跑通才算完成。</div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">5</div>
+          <div class="flow-title">反馈错误</div>
+          <div class="flow-desc">把报错、文件路径、刚改内容发回给 AI 继续迭代。</div>
+        </div>
+      </div>
+
+      <div class="card-grid three" style="margin-top:16px">
+        <div class="card">
+          <span class="card-kicker">上下文</span>
+          <h3>先告诉 AI 你在哪个项目里</h3>
+          <p>例如：<code>oleap-uniapp-demo</code> 是手机端，<code>oleap-fastify-demo</code> 是后端，前端已经能拿到 <code>audio.filePath</code>。</p>
+        </div>
+        <div class="card">
+          <span class="card-kicker teal">边界</span>
+          <h3>明确不能改哪里</h3>
+          <p>例如：不要修改 <code>uni_modules/oleap-ble-sdk/utssdk</code>，不要重写整个项目，只改当前页面或当前接口。</p>
+        </div>
+        <div class="card">
+          <span class="card-kicker green">目标</span>
+          <h3>一次只给一个小目标</h3>
+          <p>例如：只增加“调用后端处理”按钮，只新增 <code>/api/knowledge/create</code> 接口。</p>
+        </div>
+        <div class="card">
+          <span class="card-kicker purple">位置</span>
+          <h3>要求 AI 说明修改文件</h3>
+          <p>让 AI 说清楚改哪个文件、哪个方法、哪个页面区块，避免生成一堆不知道放哪的代码。</p>
+        </div>
+        <div class="card">
+          <span class="card-kicker amber">验收</span>
+          <h3>给出成功标准</h3>
+          <p>例如：保留 <code>onLoad(query)</code> 读取 filePath，显示 loading/error，展示 summary、keywords、suggestions。</p>
+        </div>
+        <div class="card">
+          <span class="card-kicker green">反馈</span>
+          <h3>把报错原样发回去</h3>
+          <p>不要只说“不能运行”。要贴出报错、相关代码、刚才修改了什么，请 AI 给最小修复方案。</p>
+        </div>
+      </div>
+
+      <div class="split" style="margin-top:16px">
+        <div class="prompt-card open" id="prompt-bad">
+          <div class="prompt-head" role="button" tabindex="0" onclick="togglePrompt('prompt-bad')">
+            <div><div class="prompt-title">不推荐：目标太大</div><div class="prompt-meta">容易让 AI 重写、跑偏、破坏现有链路</div></div>
+            <span class="prompt-toggle">展开</span>
+          </div>
+          <div class="prompt-body">
+            <pre><code>帮我做一个语音知识库系统，代码全写好。</code></pre>
+          </div>
+        </div>
+
+        <div class="prompt-card open" id="prompt-good">
+          <div class="prompt-head" role="button" tabindex="0" onclick="togglePrompt('prompt-good')">
+            <div><div class="prompt-title">推荐：小步、清晰、可验收</div><div class="prompt-meta">适合课堂二次开发</div></div>
+            <span class="prompt-toggle">展开</span>
+          </div>
+          <div class="prompt-body">
+            <pre><code>我正在基于 oleap-uniapp-demo 做二次开发。
+当前只改 pages/transcript/transcript.vue。
+已有 filePath 来自 onLoad(query)。
+
+请增加一个按钮：调用 Fastify 后端 /api/ai/process。
+要求：
+1. 不修改 SDK
+2. 保留 filePath 读取逻辑
+3. 增加 loading/error 状态
+4. 展示 summary、keywords、suggestions
+5. 给出 template 片段和 methods 代码</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout" style="margin-top:16px">
+        <strong>课堂口径：</strong>Vibe Coding 的关键不是“会不会写神奇提示词”，而是能否把任务切小、给足上下文、运行验证，并把错误反馈成下一轮可执行修改。
+      </div>
+    </section>
+
+    <section id="ble" class="content-section">
+      <div class="sec-head">
+        <span class="sec-num">// 03</span>
+        <h2>BLE 最小扫盲：知道 App 和耳机怎么说话</h2>
+        <p class="sec-desc">今天不要求学生写 BLE 底层，只要能理解主流程和常见故障发生在哪一层。</p>
+      </div>
+      <div class="divider"></div>
+
+      <div class="flow">
+        <div class="flow-step">
+          <div class="flow-num">1</div>
+          <div class="flow-title">scan 扫描</div>
+          <div class="flow-desc">手机在附近寻找 Oleap 耳机。</div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">2</div>
+          <div class="flow-title">connect 连接</div>
+          <div class="flow-desc">找到设备后建立通信关系。</div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">3</div>
+          <div class="flow-title">write 发命令</div>
+          <div class="flow-desc">App 发开始录音、停止录音、查询电量。</div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">4</div>
+          <div class="flow-title">notify 收数据</div>
+          <div class="flow-desc">耳机主动推送录音帧和状态变化。</div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">5</div>
+          <div class="flow-title">filePath 结果</div>
+          <div class="flow-desc">SDK 输出 WAV/MP3 路径，业务从这里开始。</div>
+        </div>
+      </div>
+
+      <div class="card-grid three" style="margin-top:16px">
+        <div class="card">
+          <span class="card-kicker teal">知道就好</span>
+          <h3>service discovery</h3>
+          <p>连接成功后，手机还要发现耳机有哪些功能通道，例如控制通道和录音通道。所以“已连接”不等于“录音马上可用”。</p>
+        </div>
+        <div class="card">
+          <span class="card-kicker purple">知道就好</span>
+          <h3>characteristic</h3>
+          <p>可以把它理解成具体的读写/通知通道。SDK 会缓存这些通道，页面不用自己处理。</p>
+        </div>
+        <div class="card">
+          <span class="card-kicker amber">知道就好</span>
+          <h3>MTU</h3>
+          <p>MTU 可以粗略理解为 BLE 一次能装多少字节。它影响传输效率，但本项目里由 SDK 处理。</p>
+        </div>
+      </div>
+
+      <div class="callout" style="margin-top:16px">
+        <strong>课堂口径：</strong>学生今天主要调用 SDK API，不直接操作 BLE 底层。SDK 已经处理服务发现、特征缓存、notify 订阅、MTU、音频帧落盘和解码。
+      </div>
+    </section>
+
+    <section id="architecture" class="content-section">
+      <div class="sec-head">
+        <span class="sec-num">// 04</span>
         <h2>双项目架构</h2>
-        <p class="sec-desc">明天上课时，VSCode workspace 里建议放两个兄弟项目。</p>
+        <p class="sec-desc">课堂上，VSCode workspace 里建议放两个兄弟项目。</p>
       </div>
       <div class="divider"></div>
 
@@ -788,7 +976,7 @@ tr:last-child td { border-bottom: none; }
 
     <section id="agenda" class="content-section">
       <div class="sec-head">
-        <span class="sec-num">// 03</span>
+        <span class="sec-num">// 05</span>
         <h2>当天节奏：上午设备链路，下午后端闭环</h2>
         <p class="sec-desc">一天时间不够做完整产品，所以目标是让每组都启动自己的 MVP。</p>
       </div>
@@ -796,15 +984,15 @@ tr:last-child td { border-bottom: none; }
 
       <div class="timeline">
         <div class="tl-item">
-          <div class="tl-top"><div class="tl-title">开场：讲清楚今天只做一条主链路</div><div class="tl-time">09:00-09:20</div></div>
-          <div class="tl-body">不要上来发散创意，先知道今天要跑通什么。</div>
+          <div class="tl-top"><div class="tl-title">开场 + Vibe Coding 工作法 + BLE 最小扫盲</div><div class="tl-time">09:00-09:30</div></div>
+          <div class="tl-body">先讲今天怎么和 AI 协作，再讲扫描、连接、write、notify 分别是什么。</div>
         </div>
         <div class="tl-item">
-          <div class="tl-top"><div class="tl-title">真机：运行 uni-app，连接耳机，完成录音</div><div class="tl-time">09:20-10:40</div></div>
+          <div class="tl-top"><div class="tl-title">真机：运行 uni-app，连接耳机，完成录音</div><div class="tl-time">09:30-10:45</div></div>
           <div class="tl-body">每组至少拿到一次真实 <code>audio.filePath</code>。</div>
         </div>
         <div class="tl-item">
-          <div class="tl-top"><div class="tl-title">选题：从 README 里确定一个实战命题</div><div class="tl-time">10:40-12:00</div></div>
+          <div class="tl-top"><div class="tl-title">选题：从 README 里确定一个实战命题</div><div class="tl-time">10:45-12:00</div></div>
           <div class="tl-body">写清目标用户、场景、录音变成什么、页面展示什么。</div>
         </div>
         <div class="tl-item">
@@ -824,7 +1012,7 @@ tr:last-child td { border-bottom: none; }
 
     <section id="morning" class="content-section">
       <div class="sec-head">
-        <span class="sec-num">// 04</span>
+        <span class="sec-num">// 06</span>
         <h2>上午任务：不要急着改页面，先拿到 filePath</h2>
         <p class="sec-desc">上午唯一核心成果：证明真实设备链路通了。</p>
       </div>
@@ -868,7 +1056,7 @@ console.log('业务入口 filePath:', audio.filePath)</code></pre>
 
     <section id="backend" class="content-section">
       <div class="sec-head">
-        <span class="sec-num">// 05</span>
+        <span class="sec-num">// 07</span>
         <h2>下午第一段：Fastify 后端速成</h2>
         <p class="sec-desc">后端不是额外知识点，它是录音进入业务系统的入口。</p>
       </div>
@@ -905,7 +1093,7 @@ npm run dev</code></pre>
 
     <section id="frontend" class="content-section">
       <div class="sec-head">
-        <span class="sec-num">// 06</span>
+        <span class="sec-num">// 08</span>
         <h2>下午第二段：App 调后端</h2>
         <p class="sec-desc">先用 filePath 字符串跑通，再做真实上传。步子小一点，成功率高很多。</p>
       </div>
@@ -953,7 +1141,7 @@ uni.request({
 
     <section id="topics" class="content-section">
       <div class="sec-head">
-        <span class="sec-num">// 07</span>
+        <span class="sec-num">// 09</span>
         <h2>README 实战命题怎么选</h2>
         <p class="sec-desc">一周作业要控制范围，不要把 MVP 设计成毕业设计。</p>
       </div>
@@ -977,63 +1165,9 @@ uni.request({
       </div>
     </section>
 
-    <section id="vibe" class="content-section">
-      <div class="sec-head">
-        <span class="sec-num">// 08</span>
-        <h2>Vibe Coding：怎么问 AI 才不容易跑偏</h2>
-        <p class="sec-desc">一次只让 AI 改一小块，跑通后再进入下一步。</p>
-      </div>
-      <div class="divider"></div>
-
-      <div class="card-grid">
-        <div class="prompt-card open" id="prompt-1">
-          <div class="prompt-head" role="button" tabindex="0" onclick="togglePrompt('prompt-1')">
-            <div><div class="prompt-title">提示词 1：设计 MVP</div><div class="prompt-meta">用于选题后的第一步</div></div>
-            <span class="prompt-toggle">展开</span>
-          </div>
-          <div class="prompt-body">
-            <pre><code>我正在基于 uni-app + Oleap 耳机录音 + Fastify 后端做二次开发。
-我选择的命题是「语音知识库系统」。
-
-请帮我设计一个一周内能完成的 MVP：
-1. 用户是谁
-2. 使用场景是什么
-3. 页面需要哪些模块
-4. 后端需要哪些接口
-5. 录音 filePath 如何进入业务流程
-
-要求：不要修改 Oleap BLE SDK 底层。</code></pre>
-          </div>
-        </div>
-
-        <div class="prompt-card open" id="prompt-2">
-          <div class="prompt-head" role="button" tabindex="0" onclick="togglePrompt('prompt-2')">
-            <div><div class="prompt-title">提示词 2：新增后端接口</div><div class="prompt-meta">用于 Fastify 二次开发</div></div>
-            <span class="prompt-toggle">展开</span>
-          </div>
-          <div class="prompt-body">
-            <pre><code>请帮我在 Fastify 项目里新增接口：
-POST /api/knowledge/create
-
-要求：
-1. 新建 src/routes/knowledge.js
-2. 在 src/app.js 注册
-3. 接收 course、text、filePath
-4. 返回 summary、keywords、reviewQuestions
-5. 先用 mock 数据
-6. 代码适合初学者理解</code></pre>
-          </div>
-        </div>
-      </div>
-
-      <div class="callout" style="margin-top:16px">
-        <strong>提醒学生：</strong>AI 生成代码后，必须自己运行、看报错、做最小修改。Vibe Coding 的价值不是省掉理解，而是缩短从想法到可验证结果的距离。
-      </div>
-    </section>
-
     <section id="week" class="content-section">
       <div class="sec-head">
-        <span class="sec-num">// 09</span>
+        <span class="sec-num">// 10</span>
         <h2>课后一周开发计划</h2>
         <p class="sec-desc">把大任务拆成每天能检查的进度，学生才不会最后一天一起崩。</p>
       </div>
@@ -1052,7 +1186,7 @@ POST /api/knowledge/create
 
     <section id="acceptance" class="content-section">
       <div class="sec-head">
-        <span class="sec-num">// 10</span>
+        <span class="sec-num">// 11</span>
         <h2>验收答辩标准</h2>
         <p class="sec-desc">展示不是讲概念，必须让老师看到链路跑起来。</p>
       </div>
@@ -1086,7 +1220,7 @@ POST /api/knowledge/create
 
     <section id="trouble" class="content-section">
       <div class="sec-head">
-        <span class="sec-num">// 11</span>
+        <span class="sec-num">// 12</span>
         <h2>排错地图</h2>
         <p class="sec-desc">课堂现场最省时间的方式：先判断问题卡在哪一层。</p>
       </div>
@@ -1138,6 +1272,11 @@ POST /api/knowledge/create
 })();
 
 document.addEventListener('DOMContentLoaded', function () {
+  const sectionsForNav = Array.from(document.querySelectorAll('section[id]'));
+  if (!location.hash) {
+    window.scrollTo(0, 0);
+  }
+
   const themeToggle = document.getElementById('theme-toggle');
   if (themeToggle) {
     themeToggle.addEventListener('click', function () {
@@ -1158,7 +1297,6 @@ document.addEventListener('DOMContentLoaded', function () {
   window.addEventListener('scroll', updateProgress, { passive: true });
   updateProgress();
 
-  const sections = document.querySelectorAll('section[id]');
   const links = document.querySelectorAll('#side-nav a');
   const observer = new IntersectionObserver(function (entries) {
     entries.forEach(function (entry) {
@@ -1169,7 +1307,7 @@ document.addEventListener('DOMContentLoaded', function () {
       });
     });
   }, { rootMargin: '-22% 0px -68% 0px', threshold: 0 });
-  sections.forEach(function (section) { observer.observe(section); });
+  sectionsForNav.forEach(function (section) { observer.observe(section); });
 
   document.querySelectorAll('a[href^="#"]').forEach(function (link) {
     link.addEventListener('click', function (event) {
@@ -1187,6 +1325,28 @@ document.addEventListener('DOMContentLoaded', function () {
         head.click();
       }
     });
+  });
+
+  document.addEventListener('keydown', function (event) {
+    const tag = document.activeElement && document.activeElement.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+    const forward = event.key === 'ArrowDown' || event.key === 'ArrowRight' || event.key === 'PageDown' || event.key === ' ';
+    const backward = event.key === 'ArrowUp' || event.key === 'ArrowLeft' || event.key === 'PageUp';
+    if (!forward && !backward) return;
+
+    const currentY = window.scrollY;
+    const currentIndex = sectionsForNav.findIndex(function (section, index) {
+      const next = sectionsForNav[index + 1];
+      return currentY >= section.offsetTop - 120 && (!next || currentY < next.offsetTop - 120);
+    });
+    const fallbackIndex = currentIndex < 0 ? 0 : currentIndex;
+    const nextIndex = Math.max(0, Math.min(sectionsForNav.length - 1, fallbackIndex + (forward ? 1 : -1)));
+
+    if (nextIndex !== fallbackIndex) {
+      event.preventDefault();
+      sectionsForNav[nextIndex].scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   });
 });
 

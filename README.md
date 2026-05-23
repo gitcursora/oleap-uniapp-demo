@@ -673,6 +673,8 @@ Oleap 耳机
 
 如果你已经跑通首页，下一步建议看这些文档：
 
+- Vibe Coding 课堂 HTML 课件：`docs/oleap-vibe-coding-class-ppt.html`
+- Vibe Coding 二次开发实操指南：`docs/oleap-vibe-coding-secondary-development-guide.md`
 - API 文档：`docs/oleap-uniapp-sdk-api.md`
 - 测试计划：`docs/oleap-uniapp-sdk-test-plan.md`
 - 实施计划：`docs/oleap-uniapp-sdk-implementation-plan.md`
