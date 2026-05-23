@@ -95,7 +95,16 @@
 
 <script>
 import { OleapBle } from '@/uni_modules/oleap-ble-sdk/index.js'
-import { formatSdkError } from '@/utils/demo-runtime.js'
+import {
+  copyOleapDiagnostics,
+  disposeOleapDisposers,
+  ensureOleapReady,
+  refreshOleapDiagnostics,
+  registerOleapDisposers,
+  runOleapAction,
+  shortTime,
+  stringifyDetails
+} from '@/utils/oleap-page-runtime.js'
 
 export default {
   data() {
@@ -176,9 +185,10 @@ export default {
     }
   },
   async onLoad() {
-    await this.safeRun(async () => {
-      await OleapBle.init({ logLevel: 'debug' })
-      this.disposers.push(
+    await runOleapAction(this, async () => {
+      await ensureOleapReady()
+      registerOleapDisposers(
+        this,
         OleapBle.onDpReport((report) => {
           this.reports.unshift(report)
           this.reports = this.reports.slice(0, 8)
@@ -189,28 +199,14 @@ export default {
     await this.refresh()
   },
   onUnload() {
-    this.disposeSubscriptions()
+    disposeOleapDisposers(this)
   },
   methods: {
-    disposeSubscriptions() {
-      const disposers = this.disposers.splice(0)
-      disposers.forEach((dispose) => {
-        if (typeof dispose !== 'function') {
-          return
-        }
-        try {
-          dispose()
-        } catch (error) {}
-      })
-    },
     refreshDiagnostics() {
-      try {
-        this.connection = OleapBle.getConnectionState()
-        this.diagnostics = OleapBle.getDiagnostics() || { events: [] }
-      } catch (error) {}
+      refreshOleapDiagnostics(this)
     },
     async refresh() {
-      await this.safeRun(async () => {
+      await runOleapAction(this, async () => {
         this.refreshDiagnostics()
         this.device.battery = await OleapBle.getBattery()
         this.device.sn = await OleapBle.getSn()
@@ -220,44 +216,30 @@ export default {
         this.device.eq = await OleapBle.getEqMode()
         this.recordState = await OleapBle.getRecordState()
         this.flash = await OleapBle.getFlashCapacity()
+      }, {
+        after: () => {
+          this.refreshDiagnostics()
+        }
       })
     },
     async setEq() {
-      await this.safeRun(async () => {
+      await runOleapAction(this, async () => {
         const next = (this.device.eq.currentMode + 1) % Math.max(1, this.device.eq.modeCount)
         this.device.eq = await OleapBle.setEqMode({ mode: next })
+      }, {
+        after: () => {
+          this.refreshDiagnostics()
+        }
       })
     },
     copyDiagnostics() {
-      uni.setClipboardData({
-        data: JSON.stringify(this.diagnostics || {}, null, 2)
-      })
+      copyOleapDiagnostics(this.diagnostics)
     },
     shortTime(value) {
-      if (!value) {
-        return ''
-      }
-      return `${value}`.slice(11, 19)
+      return shortTime(value)
     },
     stringifyDetails(value) {
-      if (value == null) {
-        return '{}'
-      }
-      try {
-        return JSON.stringify(value)
-      } catch (error) {
-        return `${value}`
-      }
-    },
-    async safeRun(action) {
-      try {
-        this.error = ''
-        await action()
-      } catch (error) {
-        this.error = formatSdkError(error) || '操作失败'
-      } finally {
-        this.refreshDiagnostics()
-      }
+      return stringifyDetails(value)
     }
   }
 }

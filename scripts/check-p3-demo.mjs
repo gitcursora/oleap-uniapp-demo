@@ -89,7 +89,6 @@ for (const text of [
 
 for (const [file, source] of [
   ['pages/index/index.vue', indexPage],
-  ['pages/device/device.vue', devicePage],
   ['pages/record/record.vue', recordPage]
 ]) {
   mustContain(source, 'formatSdkError', `${file} formats SDK errors`)
@@ -98,6 +97,7 @@ for (const [file, source] of [
 }
 
 for (const [file, source] of [
+  ['pages/device/device.vue', devicePage],
   ['pages/flash/flash.vue', flashPage]
 ]) {
   mustContain(source, 'runOleapAction', `${file} uses page runtime action wrapper`)
@@ -107,6 +107,7 @@ for (const [file, source] of [
   mustNotContain(source, 'formatSdkError', `${file} local SDK error formatter`)
   mustNotContain(source, 'async safeRun(action)', `${file} local safeRun`)
   mustNotContain(source, "OleapBle.init({ logLevel: 'debug' })", `${file} local init`)
+  mustNotContain(source, 'disposeSubscriptions()', `${file} local subscription disposer`)
   mustNotContain(source, 'getDemoMockMode', `${file} mock runtime getter`)
   mustNotContain(source, 'setDemoMockMode', `${file} mock runtime setter`)
 }
@@ -161,12 +162,14 @@ for (const text of [
 for (const text of [
   'refreshDiagnostics',
   'copyDiagnostics',
+  'copyOleapDiagnostics',
   'controlDiagnosticLabel',
   'recordingDiagnosticLabel',
   'recentDiagnostics',
   'channelLabel',
   'connectedDeviceId',
-  "typeof dispose !== 'function'"
+  'OleapBle.onDpReport',
+  'refreshOleapDiagnostics'
 ]) {
   mustContain(devicePage, text, 'device diagnostics workflow')
 }
