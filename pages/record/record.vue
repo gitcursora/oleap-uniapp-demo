@@ -143,7 +143,17 @@
 
 <script>
 import { OleapBle } from '@/uni_modules/oleap-ble-sdk/index.js'
-import { formatSdkError } from '@/utils/demo-runtime.js'
+import {
+  copyOleapDiagnostics,
+  disposeOleapDisposers,
+  ensureOleapReady,
+  formatOleapError,
+  refreshOleapDiagnostics,
+  registerOleapDisposers,
+  runOleapAction,
+  shortTime,
+  stringifyDetails
+} from '@/utils/oleap-page-runtime.js'
 
 export default {
   data() {
@@ -264,20 +274,25 @@ export default {
     }
   },
   async onLoad() {
-    await this.safeRun(async () => {
-      await OleapBle.init({ logLevel: 'debug' })
+    await runOleapAction(this, async () => {
+      await ensureOleapReady()
       this.connection = OleapBle.getConnectionState()
       this.refreshDiagnostics()
       this.installSubscriptions()
+    }, {
+      after: () => {
+        this.refreshDiagnostics()
+      }
     })
   },
   onUnload() {
-    this.disposeSubscriptions()
+    disposeOleapDisposers(this)
   },
   methods: {
     installSubscriptions() {
-      this.disposeSubscriptions()
-      this.disposers.push(
+      disposeOleapDisposers(this)
+      registerOleapDisposers(
+        this,
         OleapBle.onConnectionChanged((event) => {
           this.connection = {
             connected: event.connected,
@@ -310,27 +325,13 @@ export default {
           }
         }),
         OleapBle.onError((error) => {
-          this.error = formatSdkError(error)
+          this.error = formatOleapError(error)
           this.refreshDiagnostics()
         })
       )
     },
-    disposeSubscriptions() {
-      const disposers = this.disposers.splice(0)
-      disposers.forEach((dispose) => {
-        if (typeof dispose !== 'function') {
-          return
-        }
-        try {
-          dispose()
-        } catch (error) {}
-      })
-    },
     refreshDiagnostics() {
-      try {
-        this.connection = OleapBle.getConnectionState()
-        this.diagnostics = OleapBle.getDiagnostics() || { events: [] }
-      } catch (error) {}
+      refreshOleapDiagnostics(this)
     },
     resetSessionState() {
       this.progress = {
@@ -356,7 +357,7 @@ export default {
         this.error = '请先在首页连接设备'
         return
       }
-      await this.safeRun(async () => {
+      await runOleapAction(this, async () => {
         this.busy = true
         this.resetSessionState()
         try {
@@ -371,13 +372,17 @@ export default {
         } finally {
           this.busy = false
         }
+      }, {
+        after: () => {
+          this.refreshDiagnostics()
+        }
       })
     },
     async stop() {
       if (!this.active) {
         return
       }
-      await this.safeRun(async () => {
+      await runOleapAction(this, async () => {
         this.busy = true
         this.decode = {
           phase: 'stopping',
@@ -399,6 +404,10 @@ export default {
         } finally {
           this.busy = false
         }
+      }, {
+        after: () => {
+          this.refreshDiagnostics()
+        }
       })
     },
     shouldClearActiveAfterStopError(error) {
@@ -417,25 +426,13 @@ export default {
       this.result = null
     },
     copyDiagnostics() {
-      uni.setClipboardData({
-        data: JSON.stringify(this.diagnostics || {}, null, 2)
-      })
+      copyOleapDiagnostics(this.diagnostics)
     },
     shortTime(value) {
-      if (!value) {
-        return ''
-      }
-      return `${value}`.slice(11, 19)
+      return shortTime(value)
     },
     stringifyDetails(value) {
-      if (value == null) {
-        return '{}'
-      }
-      try {
-        return JSON.stringify(value)
-      } catch (error) {
-        return `${value}`
-      }
+      return stringifyDetails(value)
     },
     goTranscript() {
       if (!this.result?.filePath) {
@@ -444,16 +441,6 @@ export default {
       uni.navigateTo({
         url: `/pages/transcript/transcript?filePath=${encodeURIComponent(this.result.filePath)}`
       })
-    },
-    async safeRun(action) {
-      try {
-        this.error = ''
-        await action()
-      } catch (error) {
-        this.error = formatSdkError(error) || '操作失败'
-      } finally {
-        this.refreshDiagnostics()
-      }
     }
   }
 }

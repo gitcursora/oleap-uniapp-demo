@@ -76,6 +76,7 @@ mustNotContain(runtime, 'DEMO_MOCK_STORAGE_KEY', 'mock runtime storage')
 
 for (const text of [
   'ensureOleapReady',
+  'formatOleapError',
   'runOleapAction',
   'registerOleapDisposers',
   'disposeOleapDisposers',
@@ -88,8 +89,7 @@ for (const text of [
 }
 
 for (const [file, source] of [
-  ['pages/index/index.vue', indexPage],
-  ['pages/record/record.vue', recordPage]
+  ['pages/index/index.vue', indexPage]
 ]) {
   mustContain(source, 'formatSdkError', `${file} formats SDK errors`)
   mustNotContain(source, 'getDemoMockMode', `${file} mock runtime getter`)
@@ -98,6 +98,7 @@ for (const [file, source] of [
 
 for (const [file, source] of [
   ['pages/device/device.vue', devicePage],
+  ['pages/record/record.vue', recordPage],
   ['pages/flash/flash.vue', flashPage]
 ]) {
   mustContain(source, 'runOleapAction', `${file} uses page runtime action wrapper`)
@@ -150,11 +151,14 @@ for (const text of [
   'goTranscript',
   'onDecodeProgress',
   'onError',
+  'formatOleapError',
   'shouldClearActiveAfterStopError',
   'refreshDiagnostics',
   'copyDiagnostics',
+  'copyOleapDiagnostics',
   'recordChannelLabel',
-  'recentDiagnostics'
+  'recentDiagnostics',
+  'refreshOleapDiagnostics'
 ]) {
   mustContain(recordPage, text, 'recording demo workflow')
 }

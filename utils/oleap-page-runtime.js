@@ -40,7 +40,7 @@ export async function runOleapAction(page, action, options = {}) {
     return await action()
   } catch (error) {
     if (errorKey) {
-      page[errorKey] = formatSdkError(error) || '操作失败'
+      page[errorKey] = formatOleapError(error)
     }
     if (rethrow) {
       throw error
@@ -54,6 +54,10 @@ export async function runOleapAction(page, action, options = {}) {
       page[busyKey] = false
     }
   }
+}
+
+export function formatOleapError(error) {
+  return formatSdkError(error) || '操作失败'
 }
 
 export function registerOleapDisposers(page, ...disposers) {

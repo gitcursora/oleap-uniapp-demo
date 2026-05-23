@@ -168,6 +168,7 @@ mustNotContain(runtime, 'DEMO_MOCK_STORAGE_KEY', 'mock mode persistence')
 const pageRuntime = read('utils/oleap-page-runtime.js')
 for (const text of [
   'ensureOleapReady',
+  'formatOleapError',
   'runOleapAction',
   'registerOleapDisposers',
   'disposeOleapDisposers',
