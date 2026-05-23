@@ -76,7 +76,7 @@ mustContain(sdkFacade, "import * as appNativeAdapter from '@/uni_modules/oleap-b
 mustContain(sdkFacade, 'getPreloadedNativeAdapter', 'preloaded UTS adapter resolver')
 mustContain(sdkFacade, 'ensureBlePermission', 'native permission guard')
 mustContain(sdkFacade, 'bluetoothState?.permissionGranted === true', 'native permission granted fast path')
-mustContain(sdkFacade, 'targetSdk >= 31', 'target-aware permission compatibility guard')
+mustContain(sdkFacade, 'target_sdk_too_low', 'target SDK guard for Android 12 Bluetooth permissions')
 mustContain(sdkFacade, 'requestAppPermissionsCompat', 'plus permission compatibility request')
 mustNotContain(sdkFacade, "import('@/uni_modules/oleap-ble-sdk')", 'dynamic UTS import that triggers App iife code splitting')
 
@@ -94,17 +94,22 @@ mustContain(manifest, 'android:usesPermissionFlags="neverForLocation"', 'Bluetoo
 mustContain(manifest, 'android:name="android.permission.ACCESS_FINE_LOCATION"', 'legacy location permission fallback')
 
 const androidDistribute = appManifest['app-plus']?.distribute?.android
-if (androidDistribute?.targetSdkVersion != null && Number(androidDistribute.targetSdkVersion) < 31) {
-  fail('manifest.json app-plus.distribute.android.targetSdkVersion must be >= 31 when explicitly configured')
+if (androidDistribute == null) {
+  fail('manifest.json app-plus.distribute.android must explicitly set Android SDK levels')
 }
-if (androidDistribute?.minSdkVersion != null && Number(androidDistribute.minSdkVersion) < 24) {
-  fail('manifest.json app-plus.distribute.android.minSdkVersion must be >= 24 when explicitly configured')
+if (Number(androidDistribute.targetSdkVersion) < 31) {
+  fail('manifest.json app-plus.distribute.android.targetSdkVersion must be >= 31')
+}
+if (Number(androidDistribute.minSdkVersion) < 24) {
+  fail('manifest.json app-plus.distribute.android.minSdkVersion must be >= 24')
 }
 
 mustContain(androidIndex, 'UTSAndroid.requestSystemPermission', 'permission request')
 mustContain(androidIndex, 'UTSAndroid.checkSystemPermissionGranted', 'permission check')
 mustContain(androidIndex, 'appTargetSdkVersion', 'runtime target SDK detection')
 mustContain(androidIndex, 'usesAndroid12BluetoothPermissions', 'target-aware Android 12 permission mode')
+mustContain(androidIndex, 'isAndroid12TargetTooLow', 'Android 12 target SDK low guard')
+mustContain(androidIndex, 'target_sdk_too_low', 'Android 12 target SDK low error')
 mustContain(androidIndex, 'permissionMode', 'permission mode diagnostics')
 mustContain(androidIndex, "'legacy-location'", 'target SDK fallback permission mode')
 mustContain(androidIndex, 'permissionGranted: hasRequiredPermissions()', 'bluetooth state permission flag')

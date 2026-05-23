@@ -136,12 +136,10 @@ function getRuntimePlus() {
 
 function buildCompatPermissionList(bluetoothState = null) {
   const androidSdk = Number(bluetoothState?.androidSdk || 0)
-  const targetSdk = Number(bluetoothState?.targetSdk || 0)
-  if (androidSdk >= 31 && targetSdk >= 31) {
+  if (androidSdk >= 31) {
     return [
       'android.permission.BLUETOOTH_SCAN',
-      'android.permission.BLUETOOTH_CONNECT',
-      'android.permission.ACCESS_FINE_LOCATION'
+      'android.permission.BLUETOOTH_CONNECT'
     ]
   }
   return ['android.permission.ACCESS_FINE_LOCATION']
@@ -192,6 +190,18 @@ async function ensureBlePermission() {
   const bluetoothState = await nativeCall('getBluetoothState').catch(() => null)
   if (bluetoothState?.permissionGranted === true) {
     return bluetoothState
+  }
+  if (Number(bluetoothState?.androidSdk || 0) >= 31 && Number(bluetoothState?.targetSdk || 0) < 31) {
+    throw makeError(
+      'target_sdk_too_low',
+      '当前自定义基座 targetSdkVersion 低于 31，Android 12+ 无法授予 BLUETOOTH_SCAN 权限，请重新打包基座',
+      'permission',
+      false,
+      {
+        androidSdk: bluetoothState?.androidSdk,
+        targetSdk: bluetoothState?.targetSdk
+      }
+    )
   }
 
   const permissions = buildCompatPermissionList(bluetoothState)

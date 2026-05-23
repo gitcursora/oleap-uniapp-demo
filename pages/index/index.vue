@@ -519,6 +519,7 @@ export default {
           if (usableKnownDevices.length > 0) {
             this.devices = usableKnownDevices
             this.addEvent(`BLE 扫描不可用，已加载 ${usableKnownDevices.length} 台已知设备`)
+            return
           } else if (Array.isArray(knownDevices) && knownDevices.length > 0) {
             this.devices = []
             this.addEvent('已知设备缺少 ID，请开启蓝牙后重新扫描')

@@ -540,6 +540,11 @@ function optionInt(options: any | null, key: string, fallback: Int): Int {
   return value.toInt()
 }
 
+function optionPositiveNumber(options: any | null, key: string, fallback: number): number {
+  const requestedTimeoutMs = optionNumber(options, key, fallback)
+  return requestedTimeoutMs > 0 ? requestedTimeoutMs : fallback
+}
+
 function optionBoolean(options: any | null, key: string, fallback: boolean = false): boolean {
   const object = optionObject(options)
   if (object == null) {
@@ -947,7 +952,21 @@ function appTargetSdkVersion(): Int {
 }
 
 function usesAndroid12BluetoothPermissions(): boolean {
-  return Build.VERSION.SDK_INT >= 31 && appTargetSdkVersion() >= 31
+  return Build.VERSION.SDK_INT >= 31
+}
+
+function isAndroid12TargetTooLow(): boolean {
+  return Build.VERSION.SDK_INT >= 31 && appTargetSdkVersion() < 31
+}
+
+function permissionModeOf(modernGranted: boolean = false): string {
+  if (Build.VERSION.SDK_INT >= 31) {
+    if (modernGranted) {
+      return 'android12-bluetooth'
+    }
+    return isAndroid12TargetTooLow() ? 'android12-target-too-low' : 'android12-bluetooth'
+  }
+  return 'legacy-location'
 }
 
 function requiredPermissions(): Array<string> {
@@ -987,24 +1006,26 @@ function hasModernBluetoothPermissions(): boolean {
 }
 
 function hasRequiredPermissions(): boolean {
-  return hasModernBluetoothPermissions() || hasLegacyLocationPermission()
+  if (Build.VERSION.SDK_INT >= 31) {
+    return hasModernBluetoothPermissions()
+  }
+  return hasLegacyLocationPermission()
 }
 
 function permissionResult(): any {
   const modernGranted = hasModernBluetoothPermissions()
   const legacyGranted = hasLegacyLocationPermission()
   const granted = modernGranted || legacyGranted
-  const usesModernPermissions = usesAndroid12BluetoothPermissions()
   return {
     bluetooth: granted,
     location: legacyGranted,
     permissionGranted: granted,
     androidSdk: Build.VERSION.SDK_INT,
     targetSdk: appTargetSdkVersion(),
-    permissionMode: modernGranted ? 'android12-bluetooth' : 'legacy-location',
+    permissionMode: permissionModeOf(modernGranted),
     modernPermissionsGranted: modernGranted,
     legacyLocationGranted: legacyGranted,
-    targetAwarePermissionMode: usesModernPermissions ? 'android12-bluetooth' : 'legacy-location'
+    targetAwarePermissionMode: permissionModeOf(modernGranted)
   }
 }
 
@@ -1099,7 +1120,7 @@ function bondedOleapDevices(): Array<OleapDeviceInfo> {
           name,
           androidSdk: Build.VERSION.SDK_INT,
           targetSdk: appTargetSdkVersion(),
-          permissionMode: usesAndroid12BluetoothPermissions() ? 'android12-bluetooth' : 'legacy-location'
+          permissionMode: permissionModeOf(hasModernBluetoothPermissions())
         })
         continue
       }
@@ -1115,7 +1136,7 @@ function bondedOleapDevices(): Array<OleapDeviceInfo> {
       error: `${error}`,
       androidSdk: Build.VERSION.SDK_INT,
       targetSdk: appTargetSdkVersion(),
-      permissionMode: usesAndroid12BluetoothPermissions() ? 'android12-bluetooth' : 'legacy-location'
+      permissionMode: permissionModeOf(hasModernBluetoothPermissions())
     })
   }
   return devices
@@ -1237,6 +1258,18 @@ function startClassicDiscoveryFallback(adapter: BluetoothAdapter, bleError: stri
     })
     return false
   }
+}
+
+function emitKnownDevicesScanFallback(bleError: string): number {
+  const devices = bondedOleapDevices()
+  devices.forEach((device: OleapDeviceInfo) => {
+    emitDeviceFound(device)
+  })
+  pushDiagnostic('scan_known_devices_fallback', {
+    count: devices.length,
+    bleError
+  })
+  return devices.length
 }
 
 function stopScanInternal(recordDiagnostic: boolean = true): void {
@@ -4151,6 +4184,20 @@ export function requestPermissions(): Promise<any> {
   if (initError != null) {
     return rejectWith<any>(initError)
   }
+  if (isAndroid12TargetTooLow()) {
+    return rejectWith<any>(
+      makeError(
+        'target_sdk_too_low',
+        '当前自定义基座 targetSdkVersion 低于 31，Android 12+ 无法授予 BLUETOOTH_SCAN 权限，请重新打包基座',
+        'permission',
+        false,
+        {
+          androidSdk: Build.VERSION.SDK_INT,
+          targetSdk: appTargetSdkVersion()
+        }
+      )
+    )
+  }
   const activity = UTSAndroid.getUniActivity()
   if (activity == null) {
     return rejectWith<any>(
@@ -4198,7 +4245,7 @@ export function getBluetoothState(): Promise<any> {
     permissionGranted: hasRequiredPermissions(),
     androidSdk: Build.VERSION.SDK_INT,
     targetSdk: appTargetSdkVersion(),
-    permissionMode: usesAndroid12BluetoothPermissions() ? 'android12-bluetooth' : 'legacy-location'
+    permissionMode: permissionModeOf(hasModernBluetoothPermissions())
   }
   pushDiagnostic('bluetooth_state', state)
   return Promise.resolve(state)
@@ -4257,28 +4304,16 @@ export function startScan(options: any | null = null): Promise<void> {
   stopScanInternal(false)
   discoveredDeviceIds.clear()
   const callback = new OleapScanCallback()
+  const timeoutMs = optionPositiveNumber(options, 'timeoutMs', DEFAULT_SCAN_TIMEOUT_MS)
   scannerCallback = callback
   try {
     scanner.startScan(callback)
-    scanning = true
-    const requestedTimeoutMs = optionInt(options, 'timeoutMs', DEFAULT_SCAN_TIMEOUT_MS)
-    const timeoutMs: Int = requestedTimeoutMs > 0 ? requestedTimeoutMs : DEFAULT_SCAN_TIMEOUT_MS
-    scanTimeoutId = setTimeout(() => {
-      stopScanInternal(true)
-    }, timeoutMs)
-    pushDiagnostic('scan_start', {
-      timeoutMs,
-      filter: OLEAP_NAME_PREFIX
-    })
-    return Promise.resolve()
   } catch (error) {
     scannerCallback = null
     const bleError = `${error}`
     const fallbackStarted = startClassicDiscoveryFallback(adapter, bleError)
     if (fallbackStarted) {
       scanning = true
-      const requestedTimeoutMs = optionInt(options, 'timeoutMs', DEFAULT_SCAN_TIMEOUT_MS)
-      const timeoutMs: Int = requestedTimeoutMs > 0 ? requestedTimeoutMs : DEFAULT_SCAN_TIMEOUT_MS
       scanTimeoutId = setTimeout(() => {
         stopScanInternal(true)
       }, timeoutMs)
@@ -4289,17 +4324,32 @@ export function startScan(options: any | null = null): Promise<void> {
       })
       return Promise.resolve()
     }
+    const knownDeviceCount = emitKnownDevicesScanFallback(bleError)
+    if (knownDeviceCount > 0) {
+      scanning = false
+      return Promise.resolve()
+    }
     scanning = false
     return rejectWith<void>(
       makeError('scan_start_failed', '启动 Android BLE 扫描失败', 'bluetooth', true, {
         error: bleError,
         androidSdk: Build.VERSION.SDK_INT,
         targetSdk: appTargetSdkVersion(),
-        permissionMode: usesAndroid12BluetoothPermissions() ? 'android12-bluetooth' : 'legacy-location',
-        fallback: 'classic_discovery_unavailable'
+        permissionMode: permissionModeOf(hasModernBluetoothPermissions()),
+        fallback: 'classic_discovery_unavailable',
+        knownDeviceCount
       })
     )
   }
+  scanning = true
+  scanTimeoutId = setTimeout(() => {
+    stopScanInternal(true)
+  }, timeoutMs)
+  pushDiagnostic('scan_start', {
+    timeoutMs,
+    filter: OLEAP_NAME_PREFIX
+  })
+  return Promise.resolve()
 }
 
 export function stopScan(): Promise<void> {

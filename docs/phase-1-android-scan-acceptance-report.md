@@ -10,9 +10,10 @@
 - Android 12+ 运行时权限：`BLUETOOTH_SCAN`、`BLUETOOTH_CONNECT`。
 - 宿主 `manifest.json` 明确 `targetSdkVersion >= 31`，否则 Android 权限库不允许请求 `BLUETOOTH_SCAN/CONNECT`。
 - 宿主 `manifest.json` 明确 `minSdkVersion >= 24`，匹配 UTS 插件和 OPUS decoder AAR 的 Android 7.0+ 要求。
-- UTS 运行时按真实 `targetSdkVersion` 选择权限组：`targetSdk >= 31` 请求 `BLUETOOTH_SCAN/CONNECT`，否则回退请求 `ACCESS_FINE_LOCATION`。
+- UTS 运行时按 Android 系统版本选择权限组：Android 12+ 请求 `BLUETOOTH_SCAN/CONNECT`，Android 11 及以下请求 `ACCESS_FINE_LOCATION`。
 - `BLUETOOTH_SCAN` manifest 使用 `android:usesPermissionFlags="neverForLocation"`，明确扫描不用于物理定位，避免 Android 权限库在授权前抛出 manifest 配置异常。
-- Android 11 及以下、或宿主实际 `targetSdkVersion < 31` 时的运行时权限：`ACCESS_FINE_LOCATION`。
+- Android 12+ 如果宿主实际 `targetSdkVersion < 31`，SDK 会返回 `target_sdk_too_low`，要求重新打包自定义基座。
+- Android 11 及以下的运行时权限：`ACCESS_FINE_LOCATION`。
 - 蓝牙支持和开启状态查询。
 - BLE 扫描启动。
 - BLE `startScan(callback)` 兼容路径，避免部分运行基座对自定义 `ScanSettings` 的兼容差异。
@@ -61,7 +62,7 @@ Phase 0 check passed
 
 - P1-1/P1-2 的代码边界清晰，没有提前实现连接。
 - 扫描前检查权限和蓝牙状态。
-- Android 12+ 且宿主实际 `targetSdkVersion >= 31` 时不额外申请定位权限；如果 HBuilderX 自定义基座实际仍是 `targetSdkVersion < 31`，则按旧权限模型请求 `ACCESS_FINE_LOCATION`，避免 `BLUETOOTH_CONNECT` 被权限库拦截。
+- Android 12+ 不再把定位权限当作 BLE 扫描充分条件；如果 HBuilderX 自定义基座实际仍是 `targetSdkVersion < 31`，会提前提示重新打包，避免授权看似成功但 `BluetoothLeScanner.startScan` 抛 `Need android.permission.BLUETOOTH_SCAN`。
 - Android 打包 target SDK 由宿主项目声明，插件不在自身 Manifest 中覆盖 target SDK，避免影响集成方全局打包策略。
 - 扫描优先走 BLE scanner，失败后自动回退到经典蓝牙发现，减少自定义基座或厂商蓝牙栈差异带来的不可用面。
 - 扫描有超时和显式停止路径。
