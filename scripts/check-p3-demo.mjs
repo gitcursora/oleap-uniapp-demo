@@ -30,6 +30,7 @@ function mustNotContain(source, pattern, label) {
 
 const sdk = read('uni_modules/oleap-ble-sdk/index.js')
 const runtime = read('utils/demo-runtime.js')
+const pageRuntime = read('utils/oleap-page-runtime.js')
 const indexPage = read('pages/index/index.vue')
 const recordPage = read('pages/record/record.vue')
 const devicePage = read('pages/device/device.vue')
@@ -72,6 +73,19 @@ for (const text of [
 }
 
 mustNotContain(runtime, 'DEMO_MOCK_STORAGE_KEY', 'mock runtime storage')
+
+for (const text of [
+  'ensureOleapReady',
+  'runOleapAction',
+  'registerOleapDisposers',
+  'disposeOleapDisposers',
+  'refreshOleapDiagnostics',
+  'copyOleapDiagnostics',
+  'shortTime',
+  'stringifyDetails'
+]) {
+  mustContain(pageRuntime, text, 'page runtime helper')
+}
 
 for (const [file, source] of [
   ['pages/index/index.vue', indexPage],

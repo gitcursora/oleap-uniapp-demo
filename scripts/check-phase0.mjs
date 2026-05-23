@@ -12,6 +12,7 @@ const requiredFiles = [
   'docs/oleap-uniapp-sdk-api.md',
   'docs/oleap-uniapp-sdk-test-plan.md',
   'docs/phase-0-acceptance-report.md',
+  'utils/oleap-page-runtime.js',
   'uni_modules/oleap-ble-sdk/package.json',
   'uni_modules/oleap-ble-sdk/index.js',
   'uni_modules/oleap-ble-sdk/utssdk/interface.uts',
@@ -163,5 +164,19 @@ for (const text of [
 const runtime = read('utils/demo-runtime.js')
 mustContain(runtime, 'DEMO_LAST_DEVICE_ID_STORAGE_KEY', 'last device persistence')
 mustNotContain(runtime, 'DEMO_MOCK_STORAGE_KEY', 'mock mode persistence')
+
+const pageRuntime = read('utils/oleap-page-runtime.js')
+for (const text of [
+  'ensureOleapReady',
+  'runOleapAction',
+  'registerOleapDisposers',
+  'disposeOleapDisposers',
+  'refreshOleapDiagnostics',
+  'copyOleapDiagnostics',
+  'shortTime',
+  'stringifyDetails'
+]) {
+  mustContain(pageRuntime, text, 'page runtime helper')
+}
 
 console.log('Phase 0 native-only check passed')
