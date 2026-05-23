@@ -733,6 +733,8 @@ import OleapBle from '@/uni_modules/oleap-ble-sdk/index.js'
 绝大多数页面都应该遵守这个顺序：
 
 ```js
+import { ensureOleapReady } from '@/utils/oleap-page-runtime.js'
+
 /**
  * 1. 初始化 SDK。
  * 2. 请求系统权限。
@@ -740,7 +742,7 @@ import OleapBle from '@/uni_modules/oleap-ble-sdk/index.js'
  * 4. 连接目标耳机。
  * 5. 连接成功后再查询设备状态、录音或下载 Flash 文件。
  */
-await OleapBle.init({ logLevel: 'debug' })
+await ensureOleapReady()
 await OleapBle.requestPermissions()
 await OleapBle.startScan({ timeoutMs: 3000 })
 ```
@@ -749,6 +751,12 @@ await OleapBle.startScan({ timeoutMs: 3000 })
 
 ```js
 import { OleapBle } from '@/uni_modules/oleap-ble-sdk/index.js'
+import {
+  disposeOleapDisposers,
+  ensureOleapReady,
+  registerOleapDisposers,
+  runOleapAction
+} from '@/utils/oleap-page-runtime.js'
 
 export default {
   data() {
@@ -759,35 +767,37 @@ export default {
     }
   },
   async onLoad() {
-    await OleapBle.init({ logLevel: 'debug' })
-
-    this.disposers.push(
-      OleapBle.onDeviceFound((device) => {
-        if (!this.devices.some((item) => item.deviceId === device.deviceId)) {
-          this.devices.push(device)
-        }
-      }),
-      OleapBle.onConnectionChanged((event) => {
-        this.connectedDevice = event.connected ? event.device : null
-      })
-    )
+    await runOleapAction(this, async () => {
+      await ensureOleapReady()
+      registerOleapDisposers(
+        this,
+        OleapBle.onDeviceFound((device) => {
+          if (!this.devices.some((item) => item.deviceId === device.deviceId)) {
+            this.devices.push(device)
+          }
+        }),
+        OleapBle.onConnectionChanged((event) => {
+          this.connectedDevice = event.connected ? event.device : null
+        })
+      )
+    })
   },
   onUnload() {
-    this.disposers.forEach((dispose) => {
-      if (typeof dispose === 'function') {
-        dispose()
-      }
-    })
+    disposeOleapDisposers(this)
   },
   methods: {
     async scan() {
-      await OleapBle.requestPermissions()
-      await OleapBle.startScan({ timeoutMs: 3000 })
+      await runOleapAction(this, async () => {
+        await OleapBle.requestPermissions()
+        await OleapBle.startScan({ timeoutMs: 3000 })
+      })
     },
     async connectDevice(device) {
-      await OleapBle.connect({
-        deviceId: device.deviceId,
-        name: device.name
+      await runOleapAction(this, async () => {
+        await OleapBle.connect({
+          deviceId: device.deviceId,
+          name: device.name
+        })
       })
     }
   }
@@ -1110,6 +1120,7 @@ await OleapBle.init({
 
 - 真机 App 环境才有 native UTS adapter。
 - H5 或普通浏览器环境无法直接使用手机 BLE native 能力。
+- Demo 页面推荐使用 `ensureOleapReady()`，它会缓存初始化 Promise，避免每个页面重复写初始化样板。
 
 #### requestPermissions()
 
@@ -1584,6 +1595,14 @@ console.log('音频文件路径', result.filePath)
 #### 实时录音完整示例
 
 ```js
+import { OleapBle } from '@/uni_modules/oleap-ble-sdk/index.js'
+import {
+  disposeOleapDisposers,
+  ensureOleapReady,
+  registerOleapDisposers,
+  runOleapAction
+} from '@/utils/oleap-page-runtime.js'
+
 export default {
   data() {
     return {
@@ -1599,32 +1618,30 @@ export default {
     }
   },
   async onLoad() {
-    await OleapBle.init({ logLevel: 'debug' })
-
-    this.disposers.push(
-      OleapBle.onRecordingProgress((event) => {
-        if (event.flash) {
-          return
-        }
-        this.progress = {
-          durationMs: event.durationMs || 0,
-          frameCount: event.frameCount || 0
-        }
-      }),
-      OleapBle.onDecodeProgress((event) => {
-        console.log('解码进度', event.phase, event.progress)
-      }),
-      OleapBle.onError((error) => {
-        console.log('SDK 错误', error.code, error.message)
-      })
-    )
+    await runOleapAction(this, async () => {
+      await ensureOleapReady()
+      registerOleapDisposers(
+        this,
+        OleapBle.onRecordingProgress((event) => {
+          if (event.flash) {
+            return
+          }
+          this.progress = {
+            durationMs: event.durationMs || 0,
+            frameCount: event.frameCount || 0
+          }
+        }),
+        OleapBle.onDecodeProgress((event) => {
+          console.log('解码进度', event.phase, event.progress)
+        }),
+        OleapBle.onError((error) => {
+          console.log('SDK 错误', error.code, error.message)
+        })
+      )
+    })
   },
   onUnload() {
-    this.disposers.forEach((dispose) => {
-      if (typeof dispose === 'function') {
-        dispose()
-      }
-    })
+    disposeOleapDisposers(this)
   },
   methods: {
     async start() {
@@ -1634,12 +1651,16 @@ export default {
         return
       }
 
-      await OleapBle.startRecording({ scene: this.scene })
-      this.active = true
+      await runOleapAction(this, async () => {
+        await OleapBle.startRecording({ scene: this.scene })
+        this.active = true
+      })
     },
     async stop() {
-      this.result = await OleapBle.stopRecording({ format: this.format })
-      this.active = false
+      await runOleapAction(this, async () => {
+        this.result = await OleapBle.stopRecording({ format: this.format })
+        this.active = false
+      })
 
       uni.showToast({
         title: '录音文件已生成',
@@ -1736,6 +1757,14 @@ await OleapBle.stopFlashDownload()
 #### Flash 下载完整示例
 
 ```js
+import { OleapBle } from '@/uni_modules/oleap-ble-sdk/index.js'
+import {
+  disposeOleapDisposers,
+  ensureOleapReady,
+  registerOleapDisposers,
+  runOleapAction
+} from '@/utils/oleap-page-runtime.js'
+
 export default {
   data() {
     return {
@@ -1747,35 +1776,37 @@ export default {
     }
   },
   async onLoad() {
-    await OleapBle.init({ logLevel: 'debug' })
-
-    this.disposers.push(
-      OleapBle.onRecordingProgress((event) => {
-        if (!event.flash) {
-          return
-        }
-        this.progress = event.progress || 0
-      })
-    )
+    await runOleapAction(this, async () => {
+      await ensureOleapReady()
+      registerOleapDisposers(
+        this,
+        OleapBle.onRecordingProgress((event) => {
+          if (!event.flash) {
+            return
+          }
+          this.progress = event.progress || 0
+        })
+      )
+    })
   },
   onUnload() {
-    this.disposers.forEach((dispose) => {
-      if (typeof dispose === 'function') {
-        dispose()
-      }
-    })
+    disposeOleapDisposers(this)
   },
   methods: {
     async refreshFiles() {
-      this.files = await OleapBle.listFlashRecordings()
+      await runOleapAction(this, async () => {
+        this.files = await OleapBle.listFlashRecordings()
+      })
     },
     async download(file) {
       this.downloading = true
       try {
-        this.result = await OleapBle.downloadFlashRecording({
-          fileId: file.fileId,
-          format: 'wav',
-          deleteAfterSuccess: false
+        await runOleapAction(this, async () => {
+          this.result = await OleapBle.downloadFlashRecording({
+            fileId: file.fileId,
+            format: 'wav',
+            deleteAfterSuccess: false
+          })
         })
       } finally {
         this.downloading = false
@@ -1800,19 +1831,26 @@ export default {
 通用写法：
 
 ```js
+import {
+  disposeOleapDisposers,
+  registerOleapDisposers
+} from '@/utils/oleap-page-runtime.js'
+
 export default {
   data() {
     return {
       disposers: []
     }
   },
+  onLoad() {
+    registerOleapDisposers(
+      this,
+      OleapBle.onDeviceFound((device) => {}),
+      OleapBle.onConnectionChanged((event) => {})
+    )
+  },
   onUnload() {
-    this.disposers.forEach((dispose) => {
-      if (typeof dispose === 'function') {
-        dispose()
-      }
-    })
-    this.disposers = []
+    disposeOleapDisposers(this)
   }
 }
 ```
@@ -2032,7 +2070,7 @@ OleapBle.clearDiagnostics()
 #### 链路 1：扫描并连接
 
 ```js
-await OleapBle.init({ logLevel: 'debug' })
+await ensureOleapReady()
 await OleapBle.requestPermissions()
 
 const off = OleapBle.onDeviceFound(async (device) => {
@@ -2101,25 +2139,12 @@ if (files.length > 0) {
 
 ### 23.13 错误处理模板
 
-页面里不要让 Promise 错误直接飘到控制台。推荐每个按钮方法都套一层 `try/catch`。
+页面里不要让 Promise 错误直接飘到控制台。Demo 页面推荐用 `runOleapAction()` 统一收口。
 
 ```js
-async function safeRun(task) {
-  try {
-    await task()
-  } catch (error) {
-    const message = error?.message || '操作失败'
-    const code = error?.code || 'unknown'
+import { runOleapAction } from '@/utils/oleap-page-runtime.js'
 
-    console.log('SDK error', code, error)
-    uni.showToast({
-      title: message,
-      icon: 'none'
-    })
-  }
-}
-
-await safeRun(async () => {
+await runOleapAction(this, async () => {
   await OleapBle.startScan({ timeoutMs: 3000 })
 })
 ```

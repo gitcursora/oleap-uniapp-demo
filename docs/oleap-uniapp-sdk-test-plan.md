@@ -16,6 +16,7 @@ npm run check:phase0
 - `pages.json` 中的页面文件存在。
 - 页面均通过 SDK facade import。
 - 页面包含 `onUnload` 订阅清理。
+- 页面 runtime 工具存在，统一收敛初始化、错误收口、订阅释放和诊断格式化。
 - 控制、录音、Flash fixture 文件存在且是合法 hex。
 - SDK facade 默认走 native adapter。
 - Demo 页面不再包含 mock 模式入口或 mock 持久化状态。

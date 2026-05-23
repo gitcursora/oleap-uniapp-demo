@@ -18,6 +18,18 @@ await OleapBle.init({
 
 SDK facade 默认走 UTS native adapter。Demo 不再提供 mock mode，课堂环境要求先在真机 App 中完成授权、扫描和连接。
 
+Demo 页面推荐通过页面 runtime 初始化，避免每个页面重复写初始化和错误收口样板：
+
+```js
+import { ensureOleapReady, runOleapAction } from '@/utils/oleap-page-runtime.js'
+
+await runOleapAction(this, async () => {
+  await ensureOleapReady()
+})
+```
+
+注意：`ensureOleapReady()` 是 Demo 层辅助函数，不是 SDK API。SDK API 仍然从 `OleapBle` 调用。
+
 ## 连接
 
 ```js
@@ -34,6 +46,24 @@ off()
 ```
 
 所有 `onXxx` 方法都返回取消订阅函数。页面卸载时必须调用。
+
+Demo 页面推荐使用订阅工具统一释放：
+
+```js
+import {
+  disposeOleapDisposers,
+  registerOleapDisposers
+} from '@/utils/oleap-page-runtime.js'
+
+registerOleapDisposers(
+  this,
+  OleapBle.onDeviceFound((device) => {}),
+  OleapBle.onConnectionChanged((event) => {})
+)
+
+// onUnload
+disposeOleapDisposers(this)
+```
 
 ## 设备控制
 
