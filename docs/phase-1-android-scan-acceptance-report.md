@@ -8,13 +8,19 @@
 
 - Android UTS 平台层初始化。
 - Android 12+ 运行时权限：`BLUETOOTH_SCAN`、`BLUETOOTH_CONNECT`。
+- 宿主 `manifest.json` 明确 `targetSdkVersion >= 31`，否则 Android 权限库不允许请求 `BLUETOOTH_SCAN/CONNECT`。
+- 宿主 `manifest.json` 明确 `minSdkVersion >= 24`，匹配 UTS 插件和 OPUS decoder AAR 的 Android 7.0+ 要求。
+- UTS 运行时按真实 `targetSdkVersion` 选择权限组：`targetSdk >= 31` 请求 `BLUETOOTH_SCAN/CONNECT`，否则回退请求 `ACCESS_FINE_LOCATION`。
 - `BLUETOOTH_SCAN` manifest 使用 `android:usesPermissionFlags="neverForLocation"`，明确扫描不用于物理定位，避免 Android 权限库在授权前抛出 manifest 配置异常。
-- Android 11 及以下运行时权限：`ACCESS_FINE_LOCATION`。
+- Android 11 及以下、或宿主实际 `targetSdkVersion < 31` 时的运行时权限：`ACCESS_FINE_LOCATION`。
 - 蓝牙支持和开启状态查询。
 - BLE 扫描启动。
+- BLE `startScan(callback)` 兼容路径，避免部分运行基座对自定义 `ScanSettings` 的兼容差异。
+- 当 BLE scanner 启动失败时，回退到经典蓝牙 `BluetoothAdapter.startDiscovery()` 发现 Oleap 设备地址。
 - BLE 扫描停止。
 - 扫描超时自动停止。
 - Oleap 设备名前缀过滤。
+- 设备名前缀过滤改为大小写不敏感，兼容 `OLEAP Archer` / `Oleap Archer` 等固件命名差异。
 - 设备名优先读取 `BluetoothDevice.getName()`，为空时回退到 `ScanRecord.getDeviceName()`。
 - `onDeviceFound` 事件订阅和取消订阅。
 - 扫描错误和诊断日志。
@@ -55,9 +61,12 @@ Phase 0 check passed
 
 - P1-1/P1-2 的代码边界清晰，没有提前实现连接。
 - 扫描前检查权限和蓝牙状态。
-- Android 12+ 不额外申请定位权限；Android 11 及以下保留 `ACCESS_FINE_LOCATION`，符合 BLE 扫描历史权限要求和最小权限原则。
+- Android 12+ 且宿主实际 `targetSdkVersion >= 31` 时不额外申请定位权限；如果 HBuilderX 自定义基座实际仍是 `targetSdkVersion < 31`，则按旧权限模型请求 `ACCESS_FINE_LOCATION`，避免 `BLUETOOTH_CONNECT` 被权限库拦截。
+- Android 打包 target SDK 由宿主项目声明，插件不在自身 Manifest 中覆盖 target SDK，避免影响集成方全局打包策略。
+- 扫描优先走 BLE scanner，失败后自动回退到经典蓝牙发现，减少自定义基座或厂商蓝牙栈差异带来的不可用面。
 - 扫描有超时和显式停止路径。
 - 只向页面发出 Oleap 设备，避免页面层处理全量蓝牙设备。
+- 设备过滤对大小写不敏感，减少不同硬件批次或系统上报名称大小写差异导致的“扫描无结果”。
 - 扫描超时有默认值和正数保护，避免传入异常 timeout 导致扫描无法自动结束。
 - 事件订阅返回取消函数，保持 Phase 0 的副作用约束。
 

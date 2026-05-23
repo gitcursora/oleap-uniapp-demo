@@ -14,6 +14,7 @@ const manifest = readFileSync(
   resolve(root, 'uni_modules/oleap-ble-sdk/utssdk/app-android/AndroidManifest.xml'),
   'utf8'
 )
+const appManifest = JSON.parse(readFileSync(resolve(root, 'manifest.json'), 'utf8'))
 
 if (!existsSync(resolve(root, 'docs/phase-1-android-scan-acceptance-report.md'))) {
   fail('Missing Phase 1 Android scan acceptance report')
@@ -60,7 +61,9 @@ const requiredAndroidImports = [
   'android.bluetooth.BluetoothProfile',
   'android.bluetooth.le.ScanCallback',
   'android.bluetooth.le.ScanResult',
-  'android.bluetooth.le.ScanSettings',
+  'android.content.BroadcastReceiver',
+  'android.content.Intent',
+  'android.content.IntentFilter',
   'android.os.Build'
 ]
 
@@ -71,7 +74,10 @@ for (const importPath of requiredAndroidImports) {
 mustContain(sdkFacade, '// #ifdef APP', 'app UTS adapter condition')
 mustContain(sdkFacade, "import * as appNativeAdapter from '@/uni_modules/oleap-ble-sdk'", 'static UTS plugin root import')
 mustContain(sdkFacade, 'getPreloadedNativeAdapter', 'preloaded UTS adapter resolver')
-mustContain(sdkFacade, 'bluetooth.permissionGranted !== true', 'native scan permission guard')
+mustContain(sdkFacade, 'ensureBlePermission', 'native permission guard')
+mustContain(sdkFacade, 'bluetoothState?.permissionGranted === true', 'native permission granted fast path')
+mustContain(sdkFacade, 'targetSdk >= 31', 'target-aware permission compatibility guard')
+mustContain(sdkFacade, 'requestAppPermissionsCompat', 'plus permission compatibility request')
 mustNotContain(sdkFacade, "import('@/uni_modules/oleap-ble-sdk')", 'dynamic UTS import that triggers App iife code splitting')
 
 const requiredPermissionStrings = [
@@ -85,20 +91,39 @@ for (const permission of requiredPermissionStrings) {
   mustContain(manifest, permission, 'manifest permission')
 }
 mustContain(manifest, 'android:usesPermissionFlags="neverForLocation"', 'Bluetooth scan neverForLocation manifest flag')
-mustContain(manifest, 'android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30"', 'pre-Android 12 location permission scope')
+mustContain(manifest, 'android:name="android.permission.ACCESS_FINE_LOCATION"', 'legacy location permission fallback')
+
+const androidDistribute = appManifest['app-plus']?.distribute?.android
+if (androidDistribute?.targetSdkVersion != null && Number(androidDistribute.targetSdkVersion) < 31) {
+  fail('manifest.json app-plus.distribute.android.targetSdkVersion must be >= 31 when explicitly configured')
+}
+if (androidDistribute?.minSdkVersion != null && Number(androidDistribute.minSdkVersion) < 24) {
+  fail('manifest.json app-plus.distribute.android.minSdkVersion must be >= 24 when explicitly configured')
+}
 
 mustContain(androidIndex, 'UTSAndroid.requestSystemPermission', 'permission request')
 mustContain(androidIndex, 'UTSAndroid.checkSystemPermissionGranted', 'permission check')
+mustContain(androidIndex, 'appTargetSdkVersion', 'runtime target SDK detection')
+mustContain(androidIndex, 'usesAndroid12BluetoothPermissions', 'target-aware Android 12 permission mode')
+mustContain(androidIndex, 'permissionMode', 'permission mode diagnostics')
+mustContain(androidIndex, "'legacy-location'", 'target SDK fallback permission mode')
 mustContain(androidIndex, 'permissionGranted: hasRequiredPermissions()', 'bluetooth state permission flag')
 mustContain(androidIndex, 'getBluetoothState', 'bluetooth state API')
+mustContain(androidIndex, 'listKnownDevices', 'known device API')
+mustContain(androidIndex, 'bondedOleapDevices', 'bonded device fallback')
 mustContain(androidIndex, 'startScan', 'start scan API')
 mustContain(androidIndex, 'stopScanInternal', 'scan cleanup helper')
 mustContain(androidIndex, 'stopScan', 'stop scan API')
 mustContain(androidIndex, 'OLEAP_NAME_PREFIX', 'Oleap software filter')
-mustContain(androidIndex, "name.startsWith(OLEAP_NAME_PREFIX)", 'Oleap name filter')
+mustContain(androidIndex, 'normalizedDeviceName', 'case-insensitive device name normalization')
+mustContain(androidIndex, 'isOleapDeviceName', 'Oleap name predicate')
+mustContain(androidIndex, 'normalized.startsWith(OLEAP_NAME_PREFIX)', 'case-insensitive Oleap name filter')
 mustContain(androidIndex, 'getScanRecord', 'ScanRecord fallback name')
 mustContain(androidIndex, 'requestedTimeoutMs > 0', 'scan timeout lower bound')
-mustContain(androidIndex, 'setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)', 'low latency scan setting')
+mustContain(androidIndex, 'startClassicDiscoveryFallback', 'classic discovery fallback')
+mustContain(androidIndex, 'BluetoothAdapter.ACTION_DISCOVERY_FINISHED', 'classic discovery completion signal')
+mustContain(androidIndex, 'BluetoothDevice.ACTION_FOUND', 'classic discovery device found signal')
+mustContain(androidIndex, 'scanner.startScan(callback)', 'simple BLE startScan compatibility path')
 mustContain(androidIndex, 'setTimeout', 'scan timeout')
 mustContain(androidIndex, 'clearTimeout', 'scan timeout cleanup')
 mustContain(androidIndex, 'onDeviceFound', 'device found subscription')
@@ -178,6 +203,8 @@ for (const text of requiredTransportStrings) {
 mustMatch(androidIndex, /constructor\(generation:\s*number\)/, 'GATT callback generation constructor')
 mustMatch(androidIndex, /new\s+OleapGattCallback\(generationAtStart\)/, 'GATT callback generation binding')
 mustMatch(androidIndex, /@UTSJS\.keepAlive\s+override\s+onCharacteristicChanged/, 'keepAlive notify callback')
+mustMatch(androidIndex, /override\s+onCharacteristicChanged\(gatt:\s*BluetoothGatt,\s*characteristic:\s*BluetoothGattCharacteristic,\s*value:\s*ByteArray\)/, 'Android 13 notify callback value overload')
+mustContain(androidIndex, 'this.dispatchCharacteristicChanged(characteristic, byteArrayToNumbers(value), this.generation)', 'Android 13 notify dispatch path')
 mustMatch(androidIndex, /@UTSJS\.keepAlive\s+override\s+onCharacteristicWrite/, 'keepAlive write callback')
 
 if (androidIndex.includes('unsupportedPlatformError')) {

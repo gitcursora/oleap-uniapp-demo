@@ -3,7 +3,6 @@ export type OleapRecordingFormat = 'wav' | 'mp3'
 export type OleapRecordingScene = 'meeting' | 'call' | 'media' | 'ambient'
 
 export type OleapBleInitOptions = {
-  mock?: boolean
   logLevel?: OleapBleLogLevel
 }
 
@@ -23,14 +22,18 @@ export type OleapBluetoothState = {
   supported: boolean
   enabled: boolean
   permissionGranted?: boolean
-  mock?: boolean
+  androidSdk?: number
+  targetSdk?: number
+  permissionMode?: string
 }
 
 export type OleapPermissionResult = {
   bluetooth: boolean
   location?: boolean
   permissionGranted?: boolean
-  mock?: boolean
+  androidSdk?: number
+  targetSdk?: number
+  permissionMode?: string
 }
 
 export type OleapDpReport = {
@@ -115,6 +118,7 @@ export type OleapBleCallback<T> = (event: T) => void
 export declare function init(options?: OleapBleInitOptions): Promise<void>
 export declare function requestPermissions(): Promise<OleapPermissionResult>
 export declare function getBluetoothState(): Promise<OleapBluetoothState>
+export declare function listKnownDevices(): Promise<Array<OleapDevice>>
 export declare function startScan(options?: any): Promise<void>
 export declare function stopScan(): Promise<void>
 export declare function connect(options: any): Promise<OleapDevice>

@@ -4,12 +4,11 @@
 
 ## 本轮范围
 
-- SDK JS facade 增加 mock/native 运行模式代理：
-  - `mock: true` 保持课堂无设备演示链路。
-  - `mock: false` 在 App 运行环境中加载 UTS native adapter。
-  - 订阅、同步状态和诊断 API 均按运行模式分派。
-- 首页增加 Mock/Native 模式切换，并持久化到本地存储。
-- 设备页、录音页、Flash 页统一读取运行模式。
+- SDK JS facade 切换为 native-only 代理：
+  - 在 App 运行环境中加载 UTS native adapter。
+  - 订阅、同步状态和诊断 API 均直接分派到 native adapter。
+- 首页移除 Mock/Native 模式切换，保留授权、扫描、已知设备快速连接和当前设备 ID 展示。
+- 设备页、录音页、Flash 页统一走 native adapter。
 - 录音页补齐课堂交付主流程：
   - 录音场景选择。
   - WAV/MP3 输出选择。

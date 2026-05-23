@@ -22,6 +22,12 @@ function mustContain(source, pattern, label) {
   }
 }
 
+function mustNotContain(source, pattern, label) {
+  if (source.includes(pattern)) {
+    fail(`Unexpected ${label}: ${pattern}`)
+  }
+}
+
 const sdk = read('uni_modules/oleap-ble-sdk/index.js')
 const runtime = read('utils/demo-runtime.js')
 const indexPage = read('pages/index/index.vue')
@@ -36,8 +42,9 @@ for (const text of [
   'getPreloadedNativeAdapter',
   'nativeCall',
   'nativeSubscribe',
+  "typeof unsubscribe === 'function' ? unsubscribe : () => {}",
   'nativeCallSync',
-  'useNativeMode',
+  'ensureBlePermission',
   'native_adapter_load_failed',
   'native_adapter_not_initialized'
 ]) {
@@ -45,13 +52,26 @@ for (const text of [
 }
 
 for (const text of [
-  'DEMO_MOCK_STORAGE_KEY',
-  'getDemoMockMode',
-  'setDemoMockMode',
+  'DEMO_LAST_DEVICE_ID_STORAGE_KEY',
+  'getDemoLastDeviceId',
+  'setDemoLastDeviceId',
   'formatSdkError'
 ]) {
   mustContain(runtime, text, 'demo runtime helper')
 }
+
+for (const text of [
+  'mockDevices',
+  'mockFlashFiles',
+  'useNativeMode',
+  'state.mock',
+  'MOCK-SN',
+  'mock://'
+]) {
+  mustNotContain(sdk, text, 'SDK mock branch')
+}
+
+mustNotContain(runtime, 'DEMO_MOCK_STORAGE_KEY', 'mock runtime storage')
 
 for (const [file, source] of [
   ['pages/index/index.vue', indexPage],
@@ -59,17 +79,25 @@ for (const [file, source] of [
   ['pages/record/record.vue', recordPage],
   ['pages/flash/flash.vue', flashPage]
 ]) {
-  mustContain(source, 'getDemoMockMode', `${file} uses shared runtime mode`)
   mustContain(source, 'formatSdkError', `${file} formats SDK errors`)
+  mustNotContain(source, 'getDemoMockMode', `${file} mock runtime getter`)
+  mustNotContain(source, 'setDemoMockMode', `${file} mock runtime setter`)
 }
 
 for (const text of [
-  'setRuntimeMode(true)',
-  'setRuntimeMode(false)',
-  'setDemoMockMode',
   'initializeSdk',
   'installSubscriptions',
   'disposeSubscriptions',
+  'bootstrapKnownDevices',
+  'OleapBle.listKnownDevices',
+  'setDemoLastDeviceId',
+  'getDemoLastDeviceId',
+  'connectedDeviceId',
+  'connectedDeviceName',
+  'isConnectedDevice',
+  'connected-card',
+  'connected-device',
+  'connected-text',
   'permissionGranted: false',
   'bluetoothReady',
   'refreshBluetoothState',
@@ -78,7 +106,7 @@ for (const text of [
   'const granted = result?.permissionGranted === true || result?.bluetooth === true',
   'this.bluetooth = await OleapBle.getBluetoothState().catch(() => this.bluetooth)'
 ]) {
-  mustContain(indexPage, text, 'home runtime mode controls')
+  mustContain(indexPage, text, 'home native controls')
 }
 
 for (const text of [
@@ -94,9 +122,26 @@ for (const text of [
   'goTranscript',
   'onDecodeProgress',
   'onError',
-  'shouldClearActiveAfterStopError'
+  'shouldClearActiveAfterStopError',
+  'refreshDiagnostics',
+  'copyDiagnostics',
+  'recordChannelLabel',
+  'recentDiagnostics'
 ]) {
   mustContain(recordPage, text, 'recording demo workflow')
+}
+
+for (const text of [
+  'refreshDiagnostics',
+  'copyDiagnostics',
+  'controlDiagnosticLabel',
+  'recordingDiagnosticLabel',
+  'recentDiagnostics',
+  'channelLabel',
+  'connectedDeviceId',
+  "typeof dispose !== 'function'"
+]) {
+  mustContain(devicePage, text, 'device diagnostics workflow')
 }
 
 const runtimeModule = await import(pathToFileURL(resolve(root, 'utils/demo-runtime.js')).href)

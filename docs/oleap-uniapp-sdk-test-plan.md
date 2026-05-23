@@ -1,6 +1,6 @@
 # Oleap UniApp BLE SDK Test Plan
 
-状态：Phase 0 已执行静态与 mock 验收，后续 Phase 按本计划扩展真机测试。
+状态：Phase 0 已切换为 native-only 静态验收，后续 Phase 按本计划扩展真机测试。
 
 ## Phase 0
 
@@ -17,11 +17,9 @@ npm run check:phase0
 - 页面均通过 SDK facade import。
 - 页面包含 `onUnload` 订阅清理。
 - 控制、录音、Flash fixture 文件存在且是合法 hex。
-- mock 扫描能发出设备。
-- mock 连接后能读取电量。
-- mock 实时录音能产生进度并返回 WAV 路径。
-- mock Flash 列表和下载能返回 WAV 路径。
-- 诊断日志有事件。
+- SDK facade 默认走 native adapter。
+- Demo 页面不再包含 mock 模式入口或 mock 持久化状态。
+- 首页保留授权、扫描、已知设备快速连接和连接态展示。
 
 ## Phase 1
 
@@ -132,7 +130,7 @@ npm run check:p3-demo
 - 停止录音后使用 `*.oleapframes` 输出 WAV/MP3。
 - decoder 输出文件存在性和大小校验存在。
 - 不满足 `4B header + 80B OPUS payload`、单声道、16kHz 的布局时明确失败，不伪装 WAV 成功。
-- Demo 层支持 Mock/Native 模式切换，并持久化运行模式。
+- Demo 层使用 native-only 运行模式，并保留已知设备快速连接。
 - Demo 录音页支持场景、WAV/MP3 输出、录音统计、解码进度、输出文件路径复制和转写入口。
 - Demo 层 SDK 错误码与 decoder 细节可见。
 

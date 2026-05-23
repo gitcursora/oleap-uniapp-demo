@@ -1,20 +1,23 @@
-export const DEMO_MOCK_STORAGE_KEY = 'oleap-demo-use-mock'
+export const DEMO_LAST_DEVICE_ID_STORAGE_KEY = 'oleap-demo-last-device-id'
 
-export function getDemoMockMode(defaultValue = true) {
+export function getDemoLastDeviceId(defaultValue = '') {
   try {
-    const value = uni.getStorageSync(DEMO_MOCK_STORAGE_KEY)
-    if (value === '' || value === null || typeof value === 'undefined') {
+    const value = uni.getStorageSync(DEMO_LAST_DEVICE_ID_STORAGE_KEY)
+    if (typeof value === 'string') {
+      return value
+    }
+    if (value === null || typeof value === 'undefined') {
       return defaultValue
     }
-    return value === true || value === 'true' || value === 1 || value === '1'
+    return `${value}`
   } catch (error) {
     return defaultValue
   }
 }
 
-export function setDemoMockMode(mock) {
-  const value = Boolean(mock)
-  uni.setStorageSync(DEMO_MOCK_STORAGE_KEY, value)
+export function setDemoLastDeviceId(deviceId) {
+  const value = typeof deviceId === 'string' ? deviceId : `${deviceId || ''}`
+  uni.setStorageSync(DEMO_LAST_DEVICE_ID_STORAGE_KEY, value)
   return value
 }
 

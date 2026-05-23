@@ -9,8 +9,10 @@ import BluetoothManager from 'android.bluetooth.BluetoothManager'
 import BluetoothProfile from 'android.bluetooth.BluetoothProfile'
 import ScanCallback from 'android.bluetooth.le.ScanCallback'
 import ScanResult from 'android.bluetooth.le.ScanResult'
-import ScanSettings from 'android.bluetooth.le.ScanSettings'
+import BroadcastReceiver from 'android.content.BroadcastReceiver'
 import Context from 'android.content.Context'
+import Intent from 'android.content.Intent'
+import IntentFilter from 'android.content.IntentFilter'
 import Build from 'android.os.Build'
 import File from 'java.io.File'
 import FileInputStream from 'java.io.FileInputStream'
@@ -28,7 +30,7 @@ type NativeProgressCallback = (event: any) => void
 type NativeErrorCallback = (event: any) => void
 
 const SDK_VERSION = '0.1.0-p4-flash'
-const OLEAP_NAME_PREFIX = 'Oleap'
+const OLEAP_NAME_PREFIX = 'oleap'
 const DIAGNOSTIC_LIMIT = 500
 const DEFAULT_SCAN_TIMEOUT_MS: Int = 8000
 const DEFAULT_CONNECT_TIMEOUT_MS: Int = 15000
@@ -37,6 +39,11 @@ const DEFAULT_CONTROL_TIMEOUT_MS: Int = 3000
 const DEFAULT_RECORDING_COMMAND_TIMEOUT_MS: Int = 3000
 const DEFAULT_FLASH_COMMAND_TIMEOUT_MS: Int = 3000
 const FLASH_DOWNLOAD_FRAME_TIMEOUT_MS: Int = 5000
+const DEFAULT_ANDROID_MTU: Int = 512
+const DEFAULT_ANDROID_ATT_MTU: Int = 23
+const MTU_REQUEST_TIMEOUT_MS: Int = 1200
+const SERVICE_DISCOVERY_MAX_ATTEMPTS: Int = 2
+const SERVICE_DISCOVERY_RETRY_DELAY_MS: Int = 450
 const CONTROL_MAX_ATTEMPTS = 3
 
 const COMMUNICATION_SERVICE_UUID = '00002001-0000-1000-8000-00805f9b34fb'
@@ -556,8 +563,11 @@ function nonNullAny(value: any | null): any {
 let initialized = false
 let scanning = false
 let scannerCallback: OleapScanCallback | null = null
+let classicDiscoveryReceiver: OleapClassicDiscoveryReceiver | null = null
 let scanTimeoutId: number | null = null
 let connectTimeoutId: number | null = null
+let mtuRequestTimeoutId: number | null = null
+let serviceDiscoveryRetryTimeoutId: number | null = null
 let connectedGatt: BluetoothGatt | null = null
 let gattCallback: OleapGattCallback | null = null
 let connecting = false
@@ -566,6 +576,9 @@ let pendingDeviceName: string | null = null
 let connectedDeviceId: string | null = null
 let connectedDeviceName: string | null = null
 let sessionGeneration = 0
+let currentMtu: Int = DEFAULT_ANDROID_ATT_MTU
+let waitingForMtuBeforeDiscovery = false
+let serviceDiscoveryAttempt: Int = 0
 let communicationWriteChar: BluetoothGattCharacteristic | null = null
 let communicationNotifyChar: BluetoothGattCharacteristic | null = null
 let recordWriteChar: BluetoothGattCharacteristic | null = null
@@ -604,6 +617,43 @@ const errorCallbacks = new Set<NativeErrorCallback>()
 const diagnostics = new Array<any>()
 const discoveredDeviceIds = new Set<string>()
 const dpSnapshot = new Map<number, DpEvent>()
+
+class OleapClassicDiscoveryReceiver extends BroadcastReceiver {
+  constructor() {
+    super()
+  }
+
+  @UTSJS.keepAlive
+  override onReceive(_context: Context, intent: Intent): void {
+    const action = intent.getAction()
+    if (action == null) {
+      return
+    }
+    if (action == BluetoothDevice.ACTION_FOUND) {
+      const rawDevice = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
+      if (rawDevice == null || !(rawDevice instanceof BluetoothDevice)) {
+        return
+      }
+      const device = rawDevice as BluetoothDevice
+      const name = deviceNameOf(device)
+      if (!isOleapDeviceName(name)) {
+        return
+      }
+      emitDeviceFound(new OleapDeviceInfo(
+        deviceAddressOf(device),
+        name,
+        0,
+        ''
+      ))
+      return
+    }
+    if (action == BluetoothAdapter.ACTION_DISCOVERY_FINISHED) {
+      pushDiagnostic('classic_discovery_finished', {
+        discovered: discoveredDeviceIds.size
+      })
+    }
+  }
+}
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -678,6 +728,20 @@ function clearWriteTimeout(): void {
   if (writeTimeoutId != null) {
     clearTimeout(writeTimeoutId!)
     writeTimeoutId = null
+  }
+}
+
+function clearMtuRequestTimeout(): void {
+  if (mtuRequestTimeoutId != null) {
+    clearTimeout(mtuRequestTimeoutId!)
+    mtuRequestTimeoutId = null
+  }
+}
+
+function clearServiceDiscoveryRetryTimeout(): void {
+  if (serviceDiscoveryRetryTimeoutId != null) {
+    clearTimeout(serviceDiscoveryRetryTimeoutId!)
+    serviceDiscoveryRetryTimeoutId = null
   }
 }
 
@@ -874,8 +938,20 @@ function getBluetoothAdapter(): BluetoothAdapter | null {
   return manager.getAdapter()
 }
 
+function appTargetSdkVersion(): Int {
+  const context = getContext()
+  if (context == null) {
+    return 0
+  }
+  return context.getApplicationInfo().targetSdkVersion
+}
+
+function usesAndroid12BluetoothPermissions(): boolean {
+  return Build.VERSION.SDK_INT >= 31 && appTargetSdkVersion() >= 31
+}
+
 function requiredPermissions(): Array<string> {
-  if (Build.VERSION.SDK_INT >= 31) {
+  if (usesAndroid12BluetoothPermissions()) {
     return [
       'android.permission.BLUETOOTH_SCAN',
       'android.permission.BLUETOOTH_CONNECT'
@@ -886,21 +962,49 @@ function requiredPermissions(): Array<string> {
   ]
 }
 
-function hasRequiredPermissions(): boolean {
+function hasLegacyLocationPermission(): boolean {
   const activity = UTSAndroid.getUniActivity()
   if (activity == null) {
     return false
   }
-  return UTSAndroid.checkSystemPermissionGranted(activity, requiredPermissions())
+  return UTSAndroid.checkSystemPermissionGranted(activity, [
+    'android.permission.ACCESS_FINE_LOCATION'
+  ])
+}
+
+function hasModernBluetoothPermissions(): boolean {
+  if (Build.VERSION.SDK_INT < 31) {
+    return false
+  }
+  const activity = UTSAndroid.getUniActivity()
+  if (activity == null) {
+    return false
+  }
+  return UTSAndroid.checkSystemPermissionGranted(activity, [
+    'android.permission.BLUETOOTH_SCAN',
+    'android.permission.BLUETOOTH_CONNECT'
+  ])
+}
+
+function hasRequiredPermissions(): boolean {
+  return hasModernBluetoothPermissions() || hasLegacyLocationPermission()
 }
 
 function permissionResult(): any {
-  const granted = hasRequiredPermissions()
+  const modernGranted = hasModernBluetoothPermissions()
+  const legacyGranted = hasLegacyLocationPermission()
+  const granted = modernGranted || legacyGranted
+  const usesModernPermissions = usesAndroid12BluetoothPermissions()
   return {
     bluetooth: granted,
-    location: Build.VERSION.SDK_INT >= 31 ? true : granted,
+    location: legacyGranted,
     permissionGranted: granted,
-    androidSdk: Build.VERSION.SDK_INT
+    androidSdk: Build.VERSION.SDK_INT,
+    targetSdk: appTargetSdkVersion(),
+    permissionMode: modernGranted ? 'android12-bluetooth' : 'legacy-location',
+    modernPermissionsGranted: modernGranted,
+    legacyLocationGranted: legacyGranted,
+    targetAwarePermissionMode: usesModernPermissions ? 'android12-bluetooth' : 'legacy-location'
   }
 }
 
@@ -945,6 +1049,15 @@ function resultNameOf(result: ScanResult): string {
   return scanRecordNameOf(result)
 }
 
+function normalizedDeviceName(name: string): string {
+  return name.trim().toLowerCase()
+}
+
+function isOleapDeviceName(name: string): boolean {
+  const normalized = normalizedDeviceName(name)
+  return normalized.length > 0 && normalized.startsWith(OLEAP_NAME_PREFIX)
+}
+
 function deviceAddressOf(device: BluetoothDevice): string {
   try {
     const address = device.getAddress()
@@ -961,7 +1074,41 @@ function isOleapScanResult(result: ScanResult): boolean {
     return false
   }
   const name = resultNameOf(result)
-  return name.startsWith(OLEAP_NAME_PREFIX)
+  return isOleapDeviceName(name)
+}
+
+function bondedOleapDevices(): Array<OleapDeviceInfo> {
+  const adapter = getBluetoothAdapter()
+  if (adapter == null) {
+    return new Array<OleapDeviceInfo>()
+  }
+  const devices = new Array<OleapDeviceInfo>()
+  try {
+    const bonded = adapter.getBondedDevices()
+    if (bonded == null) {
+      return devices
+    }
+    for (let device in bonded) {
+      const name = deviceNameOf(device)
+      if (!isOleapDeviceName(name)) {
+        continue
+      }
+      devices.push(new OleapDeviceInfo(
+        deviceAddressOf(device),
+        name,
+        0,
+        ''
+      ))
+    }
+  } catch (error) {
+    pushDiagnostic('bonded_devices_failed', {
+      error: `${error}`,
+      androidSdk: Build.VERSION.SDK_INT,
+      targetSdk: appTargetSdkVersion(),
+      permissionMode: usesAndroid12BluetoothPermissions() ? 'android12-bluetooth' : 'legacy-location'
+    })
+  }
+  return devices
 }
 
 function toOleapDevice(result: ScanResult): OleapDeviceInfo {
@@ -1027,6 +1174,61 @@ class OleapScanCallback extends ScanCallback {
   }
 }
 
+function unregisterClassicDiscoveryReceiver(): void {
+  if (classicDiscoveryReceiver == null) {
+    return
+  }
+  const context = getContext()
+  if (context != null) {
+    try {
+      context.unregisterReceiver(classicDiscoveryReceiver)
+    } catch (_error) {}
+  }
+  classicDiscoveryReceiver = null
+}
+
+function startClassicDiscoveryFallback(adapter: BluetoothAdapter, bleError: string): boolean {
+  const context = getContext()
+  if (context == null) {
+    pushDiagnostic('classic_discovery_unavailable', {
+      reason: 'context_missing',
+      bleError
+    })
+    return false
+  }
+  unregisterClassicDiscoveryReceiver()
+  const receiver = new OleapClassicDiscoveryReceiver()
+  const filter = new IntentFilter()
+  filter.addAction(BluetoothDevice.ACTION_FOUND)
+  filter.addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
+  try {
+    context.registerReceiver(receiver, filter)
+    classicDiscoveryReceiver = receiver
+    if (adapter.isDiscovering()) {
+      adapter.cancelDiscovery()
+    }
+    const started = adapter.startDiscovery()
+    if (!started) {
+      unregisterClassicDiscoveryReceiver()
+      pushDiagnostic('classic_discovery_rejected', {
+        bleError
+      })
+      return false
+    }
+    pushDiagnostic('classic_discovery_started', {
+      bleError
+    })
+    return true
+  } catch (error) {
+    unregisterClassicDiscoveryReceiver()
+    pushDiagnostic('classic_discovery_failed', {
+      bleError,
+      error: `${error}`
+    })
+    return false
+  }
+}
+
 function stopScanInternal(recordDiagnostic: boolean = true): void {
   if (scanTimeoutId != null) {
     clearTimeout(scanTimeoutId!)
@@ -1040,7 +1242,9 @@ function stopScanInternal(recordDiagnostic: boolean = true): void {
   scannerCallback = null
   scanning = false
   try {
-    adapter?.getBluetoothLeScanner()?.stopScan(callback)
+    if (callback != null) {
+      adapter?.getBluetoothLeScanner()?.stopScan(callback)
+    }
   } catch (error) {
     emitError(
       makeError(
@@ -1052,6 +1256,12 @@ function stopScanInternal(recordDiagnostic: boolean = true): void {
       )
     )
   }
+  try {
+    if (adapter?.isDiscovering() == true) {
+      adapter.cancelDiscovery()
+    }
+  } catch (_error) {}
+  unregisterClassicDiscoveryReceiver()
   if (recordDiagnostic) {
     pushDiagnostic('scan_stop')
   }
@@ -1077,6 +1287,8 @@ function closeGatt(recordDiagnostic: boolean = true): void {
     clearTimeout(connectTimeoutId!)
     connectTimeoutId = null
   }
+  clearMtuRequestTimeout()
+  clearServiceDiscoveryRetryTimeout()
   const gatt = connectedGatt
   const hadGatt = gatt != null
   connectedGatt = null
@@ -1086,6 +1298,9 @@ function closeGatt(recordDiagnostic: boolean = true): void {
   connectedDeviceId = null
   connectedDeviceName = null
   connecting = false
+  currentMtu = DEFAULT_ANDROID_ATT_MTU
+  waitingForMtuBeforeDiscovery = false
+  serviceDiscoveryAttempt = 0
   clearCharacteristicCache()
   rejectQueuedWrites(
     makeError('ble_disconnected', 'BLE 连接已断开，pending write 已取消', 'connection', true)
@@ -1162,7 +1377,9 @@ function channelReadySnapshot(): any {
     recordReady: recordWriteChar != null && recordNotifyChar != null,
     notificationsReady: !enablingNotifications &&
       communicationNotifyChar != null &&
-      recordNotifyChar != null
+      recordNotifyChar != null,
+    mtu: currentMtu,
+    serviceDiscoveryAttempt
   }
 }
 
@@ -1176,6 +1393,193 @@ function emitConnectionChanged(connected: boolean, device: any | null = null): v
   connectionCallbacks.forEach((callback) => {
     callback(event)
   })
+}
+
+function requestHighConnectionPriority(gatt: BluetoothGatt): void {
+  try {
+    const requested = gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
+    pushDiagnostic('connection_priority_request', {
+      priority: 'high',
+      requested,
+      generation: sessionGeneration
+    })
+  } catch (error) {
+    pushDiagnostic('connection_priority_request_failed', {
+      error: `${error}`,
+      generation: sessionGeneration
+    })
+  }
+}
+
+function requestPreferredMtu(gatt: BluetoothGatt): boolean {
+  try {
+    const requested = gatt.requestMtu(DEFAULT_ANDROID_MTU)
+    pushDiagnostic('mtu_request', {
+      requestedMtu: DEFAULT_ANDROID_MTU,
+      requested,
+      generation: sessionGeneration
+    })
+    return requested
+  } catch (error) {
+    pushDiagnostic('mtu_request_failed', {
+      requestedMtu: DEFAULT_ANDROID_MTU,
+      error: `${error}`,
+      generation: sessionGeneration
+    })
+    return false
+  }
+}
+
+function beginServiceDiscoveryAfterMtu(gatt: BluetoothGatt, reason: string): void {
+  if (!waitingForMtuBeforeDiscovery) {
+    pushDiagnostic('discover_services_after_mtu_skipped', {
+      reason,
+      generation: sessionGeneration,
+      attempt: serviceDiscoveryAttempt
+    })
+    return
+  }
+  waitingForMtuBeforeDiscovery = false
+  clearMtuRequestTimeout()
+  startServiceDiscovery(gatt, reason)
+}
+
+function requestPreferredMtuAndDiscover(gatt: BluetoothGatt): void {
+  waitingForMtuBeforeDiscovery = true
+  const requested = requestPreferredMtu(gatt)
+  if (!requested) {
+    beginServiceDiscoveryAfterMtu(gatt, 'mtu_not_requested')
+    return
+  }
+  const generation = sessionGeneration
+  clearMtuRequestTimeout()
+  mtuRequestTimeoutId = setTimeout(() => {
+    if (generation != sessionGeneration || connectedGatt == null || connectedGatt != gatt) {
+      pushDiagnostic('mtu_request_timeout_cancelled', {
+        scheduledGeneration: generation,
+        currentGeneration: sessionGeneration
+      })
+      return
+    }
+    pushDiagnostic('mtu_request_timeout', {
+      timeoutMs: MTU_REQUEST_TIMEOUT_MS,
+      currentMtu,
+      generation
+    })
+    beginServiceDiscoveryAfterMtu(gatt, 'mtu_timeout')
+  }, MTU_REQUEST_TIMEOUT_MS)
+}
+
+function startServiceDiscovery(gatt: BluetoothGatt, reason: string): void {
+  if (connectedGatt == null || connectedGatt != gatt) {
+    pushDiagnostic('discover_services_skipped', {
+      reason,
+      staleGatt: true,
+      generation: sessionGeneration
+    })
+    return
+  }
+  clearServiceDiscoveryRetryTimeout()
+  serviceDiscoveryAttempt = (serviceDiscoveryAttempt + 1) as Int
+  try {
+    const discoveryStarted = gatt.discoverServices()
+    pushDiagnostic('discover_services_start', {
+      reason,
+      started: discoveryStarted,
+      attempt: serviceDiscoveryAttempt,
+      maxAttempts: SERVICE_DISCOVERY_MAX_ATTEMPTS,
+      generation: sessionGeneration
+    })
+    if (!discoveryStarted) {
+      retryOrFailServiceDiscovery(
+        gatt,
+        'discover_services_start_failed',
+        '启动服务发现失败',
+        {
+          reason,
+          attempt: serviceDiscoveryAttempt
+        }
+      )
+    }
+  } catch (error) {
+    retryOrFailServiceDiscovery(
+      gatt,
+      'discover_services_start_failed',
+      '启动服务发现失败',
+      {
+        reason,
+        attempt: serviceDiscoveryAttempt,
+        error: `${error}`
+      }
+    )
+  }
+}
+
+function retryOrFailServiceDiscovery(gatt: BluetoothGatt, code: string, message: string, details: any | null = null): void {
+  if (connectedGatt == null || connectedGatt != gatt) {
+    return
+  }
+  if (serviceDiscoveryAttempt < SERVICE_DISCOVERY_MAX_ATTEMPTS) {
+    const generation = sessionGeneration
+    pushDiagnostic('discover_services_retry_scheduled', {
+      code,
+      attempt: serviceDiscoveryAttempt,
+      maxAttempts: SERVICE_DISCOVERY_MAX_ATTEMPTS,
+      delayMs: SERVICE_DISCOVERY_RETRY_DELAY_MS,
+      generation,
+      details
+    })
+    clearServiceDiscoveryRetryTimeout()
+    serviceDiscoveryRetryTimeoutId = setTimeout(() => {
+      if (generation != sessionGeneration || connectedGatt == null || connectedGatt != gatt) {
+        pushDiagnostic('discover_services_retry_cancelled', {
+          scheduledGeneration: generation,
+          currentGeneration: sessionGeneration
+        })
+        return
+      }
+      startServiceDiscovery(gatt, 'retry')
+    }, SERVICE_DISCOVERY_RETRY_DELAY_MS)
+    return
+  }
+  closeGatt(true)
+  rejectPendingConnect(makeError(code, message, 'connection', true, details))
+}
+
+function handleServicesDiscovered(gatt: BluetoothGatt, status: Int): void {
+  clearMtuRequestTimeout()
+  waitingForMtuBeforeDiscovery = false
+  pushDiagnostic('services_discovered', {
+    status,
+    serviceCount: gatt.getServices().size,
+    attempt: serviceDiscoveryAttempt,
+    generation: sessionGeneration
+  })
+  if (status != BluetoothGatt.GATT_SUCCESS) {
+    retryOrFailServiceDiscovery(
+      gatt,
+      'discover_services_failed',
+      'Android GATT 服务发现失败',
+      {
+        status,
+        attempt: serviceDiscoveryAttempt
+      }
+    )
+    return
+  }
+
+  if (!cacheRequiredCharacteristics(gatt)) {
+    retryOrFailServiceDiscovery(
+      gatt,
+      'required_characteristic_missing',
+      '未发现 Oleap 必需的通信或录音特征',
+      channelReadySnapshot()
+    )
+    return
+  }
+
+  clearServiceDiscoveryRetryTimeout()
+  enableRequiredNotifications(gatt)
 }
 
 function byteArrayToNumbers(value: ByteArray | null): Array<number> {
@@ -3310,6 +3714,7 @@ function finishConnectionReady(gatt: BluetoothGatt): void {
   }
   connecting = false
   enablingNotifications = false
+  clearServiceDiscoveryRetryTimeout()
   pushDiagnostic('channels_ready', channelReadySnapshot())
   emitConnectionChanged(true, deviceInfo)
   resolvePendingConnect(deviceInfo)
@@ -3557,30 +3962,10 @@ class OleapGattCallback extends BluetoothGattCallback {
       connectedGatt = gatt
       pendingDeviceId = deviceId
       pendingDeviceName = device == null ? null : deviceNameOf(device)
-      try {
-        const discoveryStarted = gatt.discoverServices()
-        if (!discoveryStarted) {
-          const connectError = makeError(
-            'discover_services_start_failed',
-            '启动服务发现失败',
-            'connection',
-            true,
-            { deviceId }
-          )
-          closeGatt(true)
-          rejectPendingConnect(connectError)
-        }
-      } catch (error) {
-        const connectError = makeError(
-          'discover_services_start_failed',
-          '启动服务发现失败',
-          'connection',
-          true,
-          { error: `${error}` }
-        )
-        closeGatt(true)
-        rejectPendingConnect(connectError)
-      }
+      currentMtu = DEFAULT_ANDROID_ATT_MTU
+      serviceDiscoveryAttempt = 0
+      requestHighConnectionPriority(gatt)
+      requestPreferredMtuAndDiscover(gatt)
       return
     }
 
@@ -3607,35 +3992,24 @@ class OleapGattCallback extends BluetoothGattCallback {
     if (!this.isCurrentGatt(gatt, 'services_discovered')) {
       return
     }
-    pushDiagnostic('services_discovered', {
+    handleServicesDiscovered(gatt, status)
+  }
+
+  @UTSJS.keepAlive
+  override onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int): void {
+    if (!this.isCurrentGatt(gatt, 'mtu_changed')) {
+      return
+    }
+    if (status == BluetoothGatt.GATT_SUCCESS && mtu > 0) {
+      currentMtu = mtu
+    }
+    pushDiagnostic('mtu_changed', {
       status,
-      serviceCount: gatt.getServices().size,
+      mtu,
+      currentMtu,
       generation: sessionGeneration
     })
-    if (status != BluetoothGatt.GATT_SUCCESS) {
-      closeGatt(true)
-      rejectPendingConnect(
-        makeError('discover_services_failed', 'Android GATT 服务发现失败', 'connection', true, { status })
-      )
-      return
-    }
-
-    if (!cacheRequiredCharacteristics(gatt)) {
-      const snapshot = channelReadySnapshot()
-      closeGatt(true)
-      rejectPendingConnect(
-        makeError(
-          'required_characteristic_missing',
-          '未发现 Oleap 必需的通信或录音特征',
-          'connection',
-          true,
-          snapshot
-        )
-      )
-      return
-    }
-
-    enableRequiredNotifications(gatt)
+    beginServiceDiscoveryAfterMtu(gatt, status == BluetoothGatt.GATT_SUCCESS ? 'mtu_changed' : 'mtu_failed')
   }
 
   @UTSJS.keepAlive
@@ -3671,8 +4045,18 @@ class OleapGattCallback extends BluetoothGattCallback {
     if (!this.isCurrentGatt(gatt, 'characteristic_changed')) {
       return
     }
-    const bytes = byteArrayToNumbers(characteristic.value)
-    const generation = this.generation
+    this.dispatchCharacteristicChanged(characteristic, byteArrayToNumbers(characteristic.value), this.generation)
+  }
+
+  @UTSJS.keepAlive
+  override onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray): void {
+    if (!this.isCurrentGatt(gatt, 'characteristic_changed_value')) {
+      return
+    }
+    this.dispatchCharacteristicChanged(characteristic, byteArrayToNumbers(value), this.generation)
+  }
+
+  dispatchCharacteristicChanged(characteristic: BluetoothGattCharacteristic, bytes: Array<number>, generation: number): void {
     if (sameUuid(characteristic.getUuid(), COMMUNICATION_NOTIFY_UUID)) {
       handleCommunicationNotify(bytes, generation)
       return
@@ -3802,10 +4186,34 @@ export function getBluetoothState(): Promise<any> {
     supported: adapter != null,
     enabled: adapter != null && adapter.isEnabled(),
     permissionGranted: hasRequiredPermissions(),
-    androidSdk: Build.VERSION.SDK_INT
+    androidSdk: Build.VERSION.SDK_INT,
+    targetSdk: appTargetSdkVersion(),
+    permissionMode: usesAndroid12BluetoothPermissions() ? 'android12-bluetooth' : 'legacy-location'
   }
   pushDiagnostic('bluetooth_state', state)
   return Promise.resolve(state)
+}
+
+export function listKnownDevices(): Promise<Array<any>> {
+  const initError = ensureInitialized()
+  if (initError != null) {
+    return rejectWith<Array<any>>(initError)
+  }
+  const devices = bondedOleapDevices()
+  pushDiagnostic('known_devices', {
+    count: devices.length,
+    devices: devices.map((device: OleapDeviceInfo) => ({
+      deviceId: device.deviceId,
+      name: device.name
+    }))
+  })
+  return Promise.resolve(devices.map((device: OleapDeviceInfo) => ({
+    deviceId: device.deviceId,
+    name: device.name,
+    rssi: device.rssi,
+    manufacturerDataHex: device.manufacturerDataHex,
+    source: 'bonded'
+  })))
 }
 
 export function startScan(options: any | null = null): Promise<void> {
@@ -3840,11 +4248,8 @@ export function startScan(options: any | null = null): Promise<void> {
   discoveredDeviceIds.clear()
   const callback = new OleapScanCallback()
   scannerCallback = callback
-  const settings = new ScanSettings.Builder()
-    .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-    .build()
   try {
-    scanner.startScan(null, settings, callback)
+    scanner.startScan(callback)
     scanning = true
     const requestedTimeoutMs = optionInt(options, 'timeoutMs', DEFAULT_SCAN_TIMEOUT_MS)
     const timeoutMs: Int = requestedTimeoutMs > 0 ? requestedTimeoutMs : DEFAULT_SCAN_TIMEOUT_MS
@@ -3858,9 +4263,31 @@ export function startScan(options: any | null = null): Promise<void> {
     return Promise.resolve()
   } catch (error) {
     scannerCallback = null
+    const bleError = `${error}`
+    const fallbackStarted = startClassicDiscoveryFallback(adapter, bleError)
+    if (fallbackStarted) {
+      scanning = true
+      const requestedTimeoutMs = optionInt(options, 'timeoutMs', DEFAULT_SCAN_TIMEOUT_MS)
+      const timeoutMs: Int = requestedTimeoutMs > 0 ? requestedTimeoutMs : DEFAULT_SCAN_TIMEOUT_MS
+      scanTimeoutId = setTimeout(() => {
+        stopScanInternal(true)
+      }, timeoutMs)
+      pushDiagnostic('scan_start_fallback', {
+        timeoutMs,
+        filter: OLEAP_NAME_PREFIX,
+        bleError
+      })
+      return Promise.resolve()
+    }
     scanning = false
     return rejectWith<void>(
-      makeError('scan_start_failed', '启动 Android BLE 扫描失败', 'bluetooth', true, { error: `${error}` })
+      makeError('scan_start_failed', '启动 Android BLE 扫描失败', 'bluetooth', true, {
+        error: bleError,
+        androidSdk: Build.VERSION.SDK_INT,
+        targetSdk: appTargetSdkVersion(),
+        permissionMode: usesAndroid12BluetoothPermissions() ? 'android12-bluetooth' : 'legacy-location',
+        fallback: 'classic_discovery_unavailable'
+      })
     )
   }
 }

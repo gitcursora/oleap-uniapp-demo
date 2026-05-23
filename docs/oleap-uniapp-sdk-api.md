@@ -12,12 +12,11 @@ import { OleapBle } from '@/uni_modules/oleap-ble-sdk/index.js'
 
 ```js
 await OleapBle.init({
-  mock: true,
   logLevel: 'debug'
 })
 ```
 
-默认使用 mock mode。App 真机环境可传 `mock: false` 走 UTS native adapter，业务页面不需要更换 API。Demo 页通过本地存储统一保存 Mock/Native 运行模式。
+SDK facade 默认走 UTS native adapter。Demo 不再提供 mock mode，课堂环境要求先在真机 App 中完成授权、扫描和连接。
 
 ## 连接
 
@@ -67,7 +66,7 @@ const result = await OleapBle.stopRecording({
 
 ```js
 {
-  filePath: 'mock://recordings/mock-xxx.wav',
+  filePath: '/cache/oleap-recordings/android-xxx.wav',
   format: 'wav',
   durationMs: 2000,
   sampleRate: 16000,

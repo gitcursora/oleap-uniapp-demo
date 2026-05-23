@@ -11,17 +11,6 @@
       </view>
     </view>
 
-    <view class="mode-card">
-      <view class="mode-copy">
-        <view class="section-title">运行模式</view>
-        <view class="muted">{{ mock ? '无需耳机即可体验完整流程' : '使用真机蓝牙连接 Oleap 耳机' }}</view>
-      </view>
-      <view class="segmented">
-        <button :class="mock ? 'segment active' : 'segment'" :disabled="busy" @click="setRuntimeMode(true)">Mock</button>
-        <button :class="!mock ? 'segment active' : 'segment'" :disabled="busy" @click="setRuntimeMode(false)">Native</button>
-      </view>
-    </view>
-
     <view class="summary-grid">
       <view class="summary-cell">
         <text class="summary-label">蓝牙</text>
@@ -35,6 +24,15 @@
         <text class="summary-label">连接</text>
         <text class="summary-value">{{ connectionLabel }}</text>
       </view>
+    </view>
+
+    <view v-if="connected" class="connected-card">
+      <view class="connected-main">
+        <view class="connected-kicker">当前连接</view>
+        <view class="connected-name">{{ connectedDeviceName }}</view>
+        <view class="connected-id">{{ connectedDeviceId }}</view>
+      </view>
+      <button class="secondary-button small-button" :disabled="busy" @click="disconnectDevice">断开</button>
     </view>
 
     <view class="action-panel">
@@ -97,7 +95,7 @@
       <view
         v-for="device in devices"
         :key="device.deviceId"
-        class="device-item"
+        :class="isConnectedDevice(device) ? 'device-item connected-device' : 'device-item'"
         @click="connectDevice(device)"
       >
         <view>
@@ -106,7 +104,9 @@
         </view>
         <view class="device-side">
           <text class="rssi">{{ device.rssi || '-' }} dBm</text>
-          <text class="connect-text">{{ connectedDevice && connectedDevice.deviceId === device.deviceId ? '当前' : '连接' }}</text>
+          <text :class="isConnectedDevice(device) ? 'connected-text' : 'connect-text'">
+            {{ isConnectedDevice(device) ? '已连接' : '连接' }}
+          </text>
         </view>
       </view>
     </view>
@@ -124,12 +124,11 @@
 
 <script>
 import { OleapBle } from '@/uni_modules/oleap-ble-sdk/index.js'
-import { formatSdkError, getDemoMockMode, setDemoMockMode } from '@/utils/demo-runtime.js'
+import { formatSdkError, getDemoLastDeviceId, setDemoLastDeviceId } from '@/utils/demo-runtime.js'
 
 export default {
   data() {
     return {
-      mock: true,
       bluetooth: {
         supported: false,
         enabled: false,
@@ -151,15 +150,12 @@ export default {
       if (this.connected) {
         return this.connectedDevice?.name || this.connectedDevice?.deviceId || 'Oleap 设备已就绪'
       }
-      return this.mock ? 'Mock 模式可直接演示扫描、连接、录音和 Flash 流程' : 'Native 模式需要先授权并扫描附近耳机'
+      return '使用真机蓝牙连接 Oleap 耳机，完成设备状态、录音和 Flash 验证'
     },
     bluetoothReady() {
-      return this.mock || (this.bluetooth.enabled && this.bluetooth.permissionGranted === true)
+      return this.bluetooth.enabled && this.bluetooth.permissionGranted === true
     },
     bluetoothLabel() {
-      if (this.mock) {
-        return '可用'
-      }
       if (!this.bluetooth.supported) {
         return '不支持'
       }
@@ -172,7 +168,13 @@ export default {
       if (!this.connected) {
         return '未连接'
       }
-      return this.connectedDevice?.name || this.connectedDevice?.deviceId || '已连接'
+      return this.connectedDeviceId || this.connectedDevice?.name || '已连接'
+    },
+    connectedDeviceName() {
+      return this.connectedDevice?.name || 'Oleap 设备'
+    },
+    connectedDeviceId() {
+      return this.connectedDevice?.deviceId || '未知设备 ID'
     },
     deviceCountLabel() {
       return this.devices.length === 0 ? '无结果' : `${this.devices.length} 台`
@@ -185,8 +187,8 @@ export default {
         {
           key: 'mode',
           index: '1',
-          title: '选择模式',
-          note: this.mock ? 'Mock' : 'Native',
+          title: '准备耳机',
+          note: '真机',
           done: true
         },
         {
@@ -217,17 +219,16 @@ export default {
         const bluetoothOff = !this.bluetooth.enabled
         return {
           title: bluetoothOff ? '打开系统蓝牙' : '打开蓝牙权限',
-          description: bluetoothOff ? '请先开启手机蓝牙，再回到页面刷新状态。' : 'Native 模式先完成系统授权，再开始扫描设备。',
+          description: bluetoothOff ? '请先开启手机蓝牙，再回到页面刷新状态。' : '先完成系统授权，再开始扫描设备。',
           actions: [
-            { key: bluetoothOff ? 'refreshBluetooth' : 'permission', label: bluetoothOff ? '刷新状态' : '授权', primary: true },
-            { key: 'mock', label: '改用 Mock', primary: false }
+            { key: bluetoothOff ? 'refreshBluetooth' : 'permission', label: bluetoothOff ? '刷新状态' : '授权', primary: true }
           ]
         }
       }
       if (this.devices.length === 0) {
         return {
           title: '扫描附近设备',
-          description: this.mock ? 'Mock 会生成两台示例设备。' : '请保持耳机开机并靠近手机。',
+          description: '请保持耳机开机并靠近手机。',
           actions: [
             { key: 'scan', label: this.scanning ? '扫描中' : '扫描', primary: true, disabled: this.scanning }
           ]
@@ -288,7 +289,6 @@ export default {
     }
   },
   async onLoad() {
-    this.mock = getDemoMockMode()
     await this.initializeSdk()
   },
   onUnload() {
@@ -298,11 +298,12 @@ export default {
   methods: {
     async initializeSdk() {
       await this.safeRun(async () => {
-        await OleapBle.init({ mock: this.mock, logLevel: 'debug' })
+        await OleapBle.init({ logLevel: 'debug' })
         this.bluetooth = await OleapBle.getBluetoothState()
         this.applyConnectionState()
         this.installSubscriptions()
-        this.addEvent(`已进入 ${this.mock ? 'Mock' : 'Native'} 模式`)
+        await this.bootstrapKnownDevices()
+        this.addEvent('Native 模式已就绪')
       })
     },
     installSubscriptions() {
@@ -317,6 +318,9 @@ export default {
         OleapBle.onConnectionChanged((event) => {
           this.connected = event.connected
           this.connectedDevice = event.device || null
+          if (event.connected && event.device?.deviceId) {
+            setDemoLastDeviceId(event.device.deviceId)
+          }
           this.addEvent(event.connected ? '设备已连接' : '设备已断开')
         }),
         OleapBle.onDpReport((event) => {
@@ -325,8 +329,15 @@ export default {
       )
     },
     disposeSubscriptions() {
-      this.disposers.forEach((dispose) => dispose())
-      this.disposers = []
+      const disposers = this.disposers.splice(0)
+      disposers.forEach((dispose) => {
+        if (typeof dispose !== 'function') {
+          return
+        }
+        try {
+          dispose()
+        } catch (error) {}
+      })
     },
     clearScanTimer() {
       if (this.scanTimer) {
@@ -334,51 +345,69 @@ export default {
         this.scanTimer = null
       }
     },
+    isConnectedDevice(device) {
+      return Boolean(this.connectedDevice?.deviceId && device?.deviceId === this.connectedDevice.deviceId)
+    },
+    preferredDevice(devices) {
+      if (!Array.isArray(devices) || devices.length === 0) {
+        return null
+      }
+      const rememberedId = getDemoLastDeviceId('')
+      if (rememberedId) {
+        const remembered = devices.find((device) => device.deviceId === rememberedId)
+        if (remembered) {
+          return remembered
+        }
+      }
+      return devices.length === 1 ? devices[0] : null
+    },
+    async autoConnectDevice(device, reason) {
+      if (!device || !device.deviceId || this.connected) {
+        return false
+      }
+      this.addEvent(`尝试自动连接${reason}`)
+      try {
+        await OleapBle.connect({
+          deviceId: device.deviceId,
+          name: device.name || 'Oleap 设备'
+        })
+        return true
+      } catch (error) {
+        this.addEvent(`自动连接失败：${device.name || device.deviceId}`)
+        return false
+      }
+    },
+    async bootstrapKnownDevices() {
+      if (!this.bluetoothReady || this.connected) {
+        return
+      }
+      const knownDevices = await OleapBle.listKnownDevices().catch(() => [])
+      if (Array.isArray(knownDevices) && knownDevices.length > 0) {
+        this.devices = knownDevices
+        this.addEvent(`已加载 ${knownDevices.length} 台已知 Oleap 设备`)
+        const preferred = this.preferredDevice(knownDevices)
+        if (preferred) {
+          await this.autoConnectDevice(preferred, preferred.deviceId === getDemoLastDeviceId('') ? '上次设备' : '已知设备')
+        }
+        return
+      }
+      const rememberedId = getDemoLastDeviceId('')
+      if (rememberedId) {
+        const rememberedDevice = {
+          deviceId: rememberedId,
+          name: '上次连接的 Oleap 设备',
+          rssi: 0,
+          manufacturerDataHex: '',
+          source: 'remembered'
+        }
+        this.devices = [rememberedDevice]
+        await this.autoConnectDevice(rememberedDevice, '上次设备')
+      }
+    },
     applyConnectionState() {
       const connection = OleapBle.getConnectionState()
       this.connected = connection.connected
       this.connectedDevice = connection.device || null
-    },
-    async setRuntimeMode(mock) {
-      const previousMock = this.mock
-      const nextMock = Boolean(mock)
-      if (previousMock === nextMock || this.busy) {
-        return
-      }
-      this.busy = true
-      this.disposeSubscriptions()
-      this.devices = []
-      this.connected = false
-      this.connectedDevice = null
-      try {
-        await OleapBle.disconnect()
-      } catch (error) {
-        // Switching mode should stay recoverable even if the old adapter was not initialized.
-      }
-      try {
-        this.error = ''
-        this.mock = nextMock
-        await OleapBle.init({ mock: nextMock, logLevel: 'debug' })
-        setDemoMockMode(nextMock)
-        this.bluetooth = await OleapBle.getBluetoothState()
-        this.applyConnectionState()
-        this.installSubscriptions()
-        this.addEvent(`切换到 ${nextMock ? 'Mock' : 'Native'} 模式`)
-      } catch (error) {
-        this.error = formatSdkError(error)
-        this.mock = previousMock
-        setDemoMockMode(previousMock)
-        await OleapBle.init({ mock: previousMock, logLevel: 'debug' }).catch(() => {})
-        this.bluetooth = await OleapBle.getBluetoothState().catch(() => ({
-          supported: false,
-          enabled: false,
-          permissionGranted: false
-        }))
-        this.applyConnectionState()
-        this.installSubscriptions()
-      } finally {
-        this.busy = false
-      }
     },
     async requestPermissions() {
       await this.safeRun(async () => {
@@ -406,18 +435,31 @@ export default {
         } catch (error) {
           this.scanning = false
           this.bluetooth = await OleapBle.getBluetoothState().catch(() => this.bluetooth)
+          const knownDevices = await OleapBle.listKnownDevices().catch(() => [])
+          if (Array.isArray(knownDevices) && knownDevices.length > 0) {
+            this.devices = knownDevices
+            this.addEvent(`BLE 扫描不可用，已加载 ${knownDevices.length} 台已知设备`)
+          }
           throw error
         }
         this.scanTimer = setTimeout(() => {
           this.scanning = false
           this.scanTimer = null
           this.addEvent(`扫描结束，发现 ${this.devices.length} 台`)
+          const preferred = this.preferredDevice(this.devices)
+          if (!this.connected && preferred) {
+            this.autoConnectDevice(preferred, preferred.deviceId === getDemoLastDeviceId('') ? '上次设备' : '扫描结果')
+          }
         }, 3200)
       })
     },
     async connectDevice(device) {
+      if (this.isConnectedDevice(device)) {
+        this.addEvent(`当前已连接 ${device.deviceId}`)
+        return
+      }
       await this.safeRun(async () => {
-        await OleapBle.connect({ deviceId: device.deviceId })
+        await OleapBle.connect({ deviceId: device.deviceId, name: device.name })
       })
     },
     async disconnectDevice() {
@@ -432,10 +474,6 @@ export default {
       }
       if (key === 'refreshBluetooth') {
         await this.refreshBluetoothState()
-        return
-      }
-      if (key === 'mock') {
-        await this.setRuntimeMode(true)
         return
       }
       if (key === 'scan') {
@@ -549,7 +587,6 @@ export default {
   background: #d9f4ee;
 }
 
-.mode-card,
 .action-panel,
 .panel {
   background: #ffffff;
@@ -557,41 +594,6 @@ export default {
   border-radius: 8px;
   padding: 24rpx;
   margin-bottom: 20rpx;
-}
-
-.mode-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20rpx;
-}
-
-.mode-copy {
-  flex: 1;
-  min-width: 0;
-}
-
-.segmented {
-  display: flex;
-  padding: 6rpx;
-  border-radius: 8px;
-  background: #eef2f7;
-}
-
-.segment {
-  min-width: 120rpx;
-  height: 62rpx;
-  line-height: 62rpx;
-  margin: 0;
-  border-radius: 6px;
-  color: #334155;
-  background: transparent;
-  font-size: 24rpx;
-}
-
-.segment.active {
-  color: #ffffff;
-  background: #116dff;
 }
 
 .summary-grid {
@@ -626,6 +628,44 @@ export default {
   color: #0f172a;
   font-size: 30rpx;
   font-weight: 700;
+  word-break: break-all;
+}
+
+.connected-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18rpx;
+  padding: 24rpx;
+  margin-bottom: 20rpx;
+  border: 1px solid #99d8cb;
+  border-radius: 8px;
+  background: #edf7f4;
+  box-sizing: border-box;
+}
+
+.connected-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.connected-kicker {
+  color: #0f766e;
+  font-size: 20rpx;
+  font-weight: 700;
+}
+
+.connected-name {
+  margin-top: 8rpx;
+  color: #0f172a;
+  font-size: 30rpx;
+  font-weight: 800;
+}
+
+.connected-id {
+  margin-top: 6rpx;
+  color: #475569;
+  font-size: 24rpx;
   word-break: break-all;
 }
 
@@ -785,8 +825,16 @@ export default {
   align-items: center;
   justify-content: space-between;
   gap: 16rpx;
-  padding: 20rpx 0;
+  padding: 20rpx 14rpx;
   border-top: 1px solid #eef2f6;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+
+.connected-device {
+  margin-top: 10rpx;
+  border: 1px solid #99d8cb;
+  background: #edf7f4;
 }
 
 .device-name {
@@ -811,6 +859,17 @@ export default {
   margin-top: 8rpx;
   color: #116dff;
   font-size: 24rpx;
+  font-weight: 700;
+}
+
+.connected-text {
+  display: inline-block;
+  margin-top: 8rpx;
+  padding: 4rpx 10rpx;
+  border-radius: 6px;
+  color: #0f766e;
+  background: #d9f4ee;
+  font-size: 22rpx;
   font-weight: 700;
 }
 

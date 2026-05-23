@@ -8,11 +8,11 @@
 
 - 普通 `uni-app` 项目基线。
 - `uni_modules/oleap-ble-sdk` 插件骨架。
-- SDK JS facade 和 mock mode。
+- SDK JS facade。
 - UTS interface、Android/iOS 占位实现。
 - 控制、录音、Flash fixture 目录。
 - 首页、设备页、实时录音页、Flash 页、转写页。
-- Phase 0 静态和 mock 验收脚本。
+- Phase 0 静态验收脚本。
 
 未实现：
 
@@ -31,13 +31,13 @@ npm run check:phase0
 结果：
 
 ```text
-Phase 0 check passed
+Phase 0 native-only check passed
 ```
 
 ## 审查结论
 
 - 页面事件订阅均在 `onUnload` 清理。
-- mock mode 可无设备跑通主链路。
+- SDK facade 当前默认走 native adapter。
 - 原生平台实现以 `unsupported_platform` 占位，不伪装成真实能力。
 - 诊断日志不包含音频 payload。
 - 当前修改限制在 `oleap-uniapp-demo` 内。
@@ -46,4 +46,3 @@ Phase 0 check passed
 
 - 进入 `P1-1`：Android 权限和蓝牙状态。
 - 进入 `P1-2`：Android 扫描和设备过滤。
-

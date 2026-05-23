@@ -58,8 +58,16 @@ function read(path) {
   return readFileSync(resolve(root, path), 'utf8')
 }
 
-function stripAppOnlyBlocks(source) {
-  return source.replace(/\/\/ #ifdef APP[\s\S]*?\/\/ #endif\s*/g, '')
+function mustContain(source, text, label) {
+  if (!source.includes(text)) {
+    fail(`Missing ${label}: ${text}`)
+  }
+}
+
+function mustNotContain(source, text, label) {
+  if (source.includes(text)) {
+    fail(`Unexpected ${label}: ${text}`)
+  }
 }
 
 function assertHexFixture(path) {
@@ -92,6 +100,30 @@ if (mainJs.includes('createSSRApp') && manifest.vueVersion !== '3') {
   fail('Vue3 entry requires manifest.json vueVersion to be "3"')
 }
 
+const sdk = read('uni_modules/oleap-ble-sdk/index.js')
+for (const text of [
+  "import * as appNativeAdapter from '@/uni_modules/oleap-ble-sdk'",
+  'loadNativeAdapter',
+  'nativeCall',
+  'nativeSubscribe',
+  'ensureBlePermission',
+  'native_adapter_missing',
+  'native_adapter_not_initialized'
+]) {
+  mustContain(sdk, text, 'native-only SDK facade')
+}
+
+for (const text of [
+  'mockDevices',
+  'mockFlashFiles',
+  'useNativeMode',
+  'MOCK-SN',
+  'mock://',
+  'state.mock'
+]) {
+  mustNotContain(sdk, text, 'mock SDK branch')
+}
+
 const pageFiles = [
   'pages/index/index.vue',
   'pages/device/device.vue',
@@ -106,61 +138,30 @@ for (const file of pageFiles) {
   if (!text.includes('onUnload()')) {
     fail(`Page does not clean subscriptions in onUnload: ${file}`)
   }
+  mustNotContain(text, 'getDemoMockMode', `${file} mock runtime helper`)
+  mustNotContain(text, 'setDemoMockMode', `${file} mock runtime setter`)
+  mustNotContain(text, 'setRuntimeMode', `${file} runtime mode switch`)
 }
 
-const sdkSource = stripAppOnlyBlocks(read('uni_modules/oleap-ble-sdk/index.js'))
-const sdk = await import(`data:text/javascript;base64,${Buffer.from(sdkSource, 'utf8').toString('base64')}`)
-const { OleapBle } = sdk
-
-await OleapBle.init({ mock: true, logLevel: 'debug' })
-await OleapBle.requestPermissions()
-const bluetooth = await OleapBle.getBluetoothState()
-if (!bluetooth.enabled) {
-  fail('Mock bluetooth state should be enabled')
+const homePage = read('pages/index/index.vue')
+for (const text of [
+  'bootstrapKnownDevices',
+  'OleapBle.listKnownDevices',
+  'connectedDeviceId',
+  'connectedDeviceName',
+  'isConnectedDevice',
+  'connected-card',
+  'connected-device',
+  'connected-text',
+  'permissionGranted: false',
+  'bluetoothReady',
+  'refreshBluetoothState'
+]) {
+  mustContain(homePage, text, 'native home workflow')
 }
 
-const found = []
-const offFound = OleapBle.onDeviceFound((device) => found.push(device))
-await OleapBle.startScan({ timeoutMs: 500 })
-await new Promise((resolvePromise) => setTimeout(resolvePromise, 650))
-offFound()
-if (found.length === 0) {
-  fail('Mock scan did not emit devices')
-}
+const runtime = read('utils/demo-runtime.js')
+mustContain(runtime, 'DEMO_LAST_DEVICE_ID_STORAGE_KEY', 'last device persistence')
+mustNotContain(runtime, 'DEMO_MOCK_STORAGE_KEY', 'mock mode persistence')
 
-await OleapBle.connect({ deviceId: found[0].deviceId })
-const battery = await OleapBle.getBattery()
-if (battery <= 0) {
-  fail('Mock battery should be positive')
-}
-
-const progress = []
-const offProgress = OleapBle.onRecordingProgress((event) => progress.push(event))
-await OleapBle.startRecording({ scene: 'meeting' })
-await new Promise((resolvePromise) => setTimeout(resolvePromise, 450))
-const recordResult = await OleapBle.stopRecording({ format: 'wav' })
-offProgress()
-if (!recordResult.filePath.endsWith('.wav')) {
-  fail('Mock recording should return wav file path')
-}
-if (progress.length === 0) {
-  fail('Mock recording did not emit progress')
-}
-
-const flashFiles = await OleapBle.listFlashRecordings()
-if (flashFiles.length === 0) {
-  fail('Mock flash list should not be empty')
-}
-const flashResult = await OleapBle.downloadFlashRecording({ fileId: flashFiles[0].fileId, format: 'wav' })
-if (!flashResult.filePath.endsWith('.wav')) {
-  fail('Mock flash download should return wav file path')
-}
-
-const diagnostics = OleapBle.getDiagnostics()
-if (!diagnostics.events.length) {
-  fail('Diagnostics should contain events')
-}
-
-await OleapBle.disconnect()
-
-console.log('Phase 0 check passed')
+console.log('Phase 0 native-only check passed')

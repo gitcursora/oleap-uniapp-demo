@@ -3,7 +3,7 @@
     "appid" : "__UNI__061B305",
     "description" : "Oleap BLE SDK teaching demo",
     "versionName" : "0.1.0",
-    "versionCode" : 102,
+    "versionCode" : 110,
     "vueVersion" : "3",
     "transformPx" : false,
     "app-plus" : {

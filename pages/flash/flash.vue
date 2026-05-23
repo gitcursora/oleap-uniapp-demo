@@ -3,10 +3,6 @@
     <view class="panel">
       <view class="title">Flash 文件</view>
       <view class="row">
-        <text>模式</text>
-        <text class="value">{{ mock ? 'Mock' : 'Native' }}</text>
-      </view>
-      <view class="row">
         <text>状态</text>
         <text class="value">{{ busy ? '下载中' : '空闲' }}</text>
       </view>
@@ -88,12 +84,11 @@
 
 <script>
 import { OleapBle } from '@/uni_modules/oleap-ble-sdk/index.js'
-import { formatSdkError, getDemoMockMode } from '@/utils/demo-runtime.js'
+import { formatSdkError } from '@/utils/demo-runtime.js'
 
 export default {
   data() {
     return {
-      mock: true,
       files: [],
       format: 'wav',
       formatOptions: [
@@ -111,9 +106,8 @@ export default {
     }
   },
   async onLoad() {
-    this.mock = getDemoMockMode()
     await this.safeRun(async () => {
-      await OleapBle.init({ mock: this.mock, logLevel: 'debug' })
+      await OleapBle.init({ logLevel: 'debug' })
       this.disposers.push(
         OleapBle.onRecordingProgress((event) => {
           if (!event.flash) return
@@ -126,8 +120,15 @@ export default {
     await this.loadFiles()
   },
   onUnload() {
-    this.disposers.forEach((dispose) => dispose())
-    this.disposers = []
+    const disposers = this.disposers.splice(0)
+    disposers.forEach((dispose) => {
+      if (typeof dispose !== 'function') {
+        return
+      }
+      try {
+        dispose()
+      } catch (error) {}
+    })
   },
   methods: {
     async loadFiles() {

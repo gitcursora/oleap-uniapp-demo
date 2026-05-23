@@ -3,12 +3,16 @@
     <view class="panel">
       <view class="title">实时录音</view>
       <view class="row">
-        <text>模式</text>
-        <text class="value">{{ mock ? 'Mock' : 'Native' }}</text>
-      </view>
-      <view class="row">
         <text>连接</text>
         <text class="value">{{ connectionLabel }}</text>
+      </view>
+      <view class="row">
+        <text>设备 ID</text>
+        <text class="value path-value">{{ connectedDeviceId }}</text>
+      </view>
+      <view class="row">
+        <text>录音通道</text>
+        <text class="value">{{ recordChannelLabel }}</text>
       </view>
       <view class="row">
         <text>状态</text>
@@ -46,6 +50,24 @@
         <button class="danger-button" :disabled="!canStop" @click="stop">结束</button>
       </view>
       <view v-if="error" class="muted error-text">{{ error }}</view>
+    </view>
+
+    <view class="panel">
+      <view class="section-title">诊断</view>
+      <view class="row">
+        <text>命令</text>
+        <text class="value">{{ recordingDiagnosticLabel }}</text>
+      </view>
+      <view class="button-row diagnostic-actions">
+        <button class="secondary-button" @click="copyDiagnostics">复制</button>
+      </view>
+      <view v-for="item in recentDiagnostics" :key="item.key" class="list-item">
+        <view class="row">
+          <text>{{ item.event }}</text>
+          <text class="value">{{ item.time }}</text>
+        </view>
+        <view class="code">{{ item.details }}</view>
+      </view>
     </view>
 
     <view class="panel">
@@ -121,12 +143,11 @@
 
 <script>
 import { OleapBle } from '@/uni_modules/oleap-ble-sdk/index.js'
-import { formatSdkError, getDemoMockMode } from '@/utils/demo-runtime.js'
+import { formatSdkError } from '@/utils/demo-runtime.js'
 
 export default {
   data() {
     return {
-      mock: true,
       connection: {
         connected: false,
         device: null
@@ -163,6 +184,9 @@ export default {
       },
       result: null,
       error: '',
+      diagnostics: {
+        events: []
+      },
       disposers: []
     }
   },
@@ -172,6 +196,19 @@ export default {
         return '未连接'
       }
       return this.connection.device?.name || this.connection.device?.deviceId || '已连接'
+    },
+    connectedDeviceId() {
+      return this.connection.device?.deviceId || '-'
+    },
+    recordChannelLabel() {
+      const channels = this.connection.channels || this.diagnostics?.channels || {}
+      if (channels.recordReady && channels.notificationsReady) {
+        return '可用'
+      }
+      if (channels.recordReady) {
+        return '等待 Notify'
+      }
+      return '未就绪'
     },
     statusLabel() {
       if (this.busy) {
@@ -198,13 +235,39 @@ export default {
     },
     resultSizeKb() {
       return Math.max(1, Math.round((this.result?.size || 0) / 1024))
+    },
+    recordingDiagnosticLabel() {
+      const recording = this.diagnostics?.recording || {}
+      if (recording.pending) {
+        return `等待 ${recording.pending.kind}`
+      }
+      if (recording.active) {
+        return recording.active.sessionId || '录音中'
+      }
+      return '空闲'
+    },
+    recentDiagnostics() {
+      const events = Array.isArray(this.diagnostics?.events) ? this.diagnostics.events : []
+      return events
+        .filter((event) => {
+          const name = event.event || ''
+          return name.indexOf('record') >= 0 || name.indexOf('write') >= 0 || name.indexOf('notify') >= 0
+        })
+        .slice(-8)
+        .reverse()
+        .map((event, index) => ({
+          key: `${event.timestamp || index}-${event.event || index}`,
+          event: event.event || 'event',
+          time: this.shortTime(event.timestamp),
+          details: this.stringifyDetails(event.details)
+        }))
     }
   },
   async onLoad() {
-    this.mock = getDemoMockMode()
     await this.safeRun(async () => {
-      await OleapBle.init({ mock: this.mock, logLevel: 'debug' })
+      await OleapBle.init({ logLevel: 'debug' })
       this.connection = OleapBle.getConnectionState()
+      this.refreshDiagnostics()
       this.installSubscriptions()
     })
   },
@@ -218,8 +281,10 @@ export default {
         OleapBle.onConnectionChanged((event) => {
           this.connection = {
             connected: event.connected,
-            device: event.device || null
+            device: event.device || null,
+            channels: event.channels || null
           }
+          this.refreshDiagnostics()
         }),
         OleapBle.onRecordingProgress((event) => {
           if (event.flash) return
@@ -236,6 +301,7 @@ export default {
             channels: event.channels || this.progress.channels || 0,
             bitrate: event.bitrate || this.progress.bitrate || 0
           }
+          this.refreshDiagnostics()
         }),
         OleapBle.onDecodeProgress((event) => {
           this.decode = {
@@ -245,12 +311,26 @@ export default {
         }),
         OleapBle.onError((error) => {
           this.error = formatSdkError(error)
+          this.refreshDiagnostics()
         })
       )
     },
     disposeSubscriptions() {
-      this.disposers.forEach((dispose) => dispose())
-      this.disposers = []
+      const disposers = this.disposers.splice(0)
+      disposers.forEach((dispose) => {
+        if (typeof dispose !== 'function') {
+          return
+        }
+        try {
+          dispose()
+        } catch (error) {}
+      })
+    },
+    refreshDiagnostics() {
+      try {
+        this.connection = OleapBle.getConnectionState()
+        this.diagnostics = OleapBle.getDiagnostics() || { events: [] }
+      } catch (error) {}
     },
     resetSessionState() {
       this.progress = {
@@ -287,6 +367,7 @@ export default {
             progress: 0
           }
           this.active = true
+          this.refreshDiagnostics()
         } finally {
           this.busy = false
         }
@@ -309,6 +390,7 @@ export default {
             phase: 'completed',
             progress: 100
           }
+          this.refreshDiagnostics()
         } catch (error) {
           if (this.shouldClearActiveAfterStopError(error)) {
             this.active = false
@@ -334,6 +416,27 @@ export default {
     clearResult() {
       this.result = null
     },
+    copyDiagnostics() {
+      uni.setClipboardData({
+        data: JSON.stringify(this.diagnostics || {}, null, 2)
+      })
+    },
+    shortTime(value) {
+      if (!value) {
+        return ''
+      }
+      return `${value}`.slice(11, 19)
+    },
+    stringifyDetails(value) {
+      if (value == null) {
+        return '{}'
+      }
+      try {
+        return JSON.stringify(value)
+      } catch (error) {
+        return `${value}`
+      }
+    },
     goTranscript() {
       if (!this.result?.filePath) {
         return
@@ -348,6 +451,8 @@ export default {
         await action()
       } catch (error) {
         this.error = formatSdkError(error) || '操作失败'
+      } finally {
+        this.refreshDiagnostics()
       }
     }
   }
@@ -369,6 +474,10 @@ export default {
 
 .path-value {
   max-width: 520rpx;
+}
+
+.diagnostic-actions {
+  margin-top: 12rpx;
 }
 
 .error-text {
