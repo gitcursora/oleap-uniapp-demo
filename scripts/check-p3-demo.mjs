@@ -90,10 +90,23 @@ for (const text of [
 for (const [file, source] of [
   ['pages/index/index.vue', indexPage],
   ['pages/device/device.vue', devicePage],
-  ['pages/record/record.vue', recordPage],
-  ['pages/flash/flash.vue', flashPage]
+  ['pages/record/record.vue', recordPage]
 ]) {
   mustContain(source, 'formatSdkError', `${file} formats SDK errors`)
+  mustNotContain(source, 'getDemoMockMode', `${file} mock runtime getter`)
+  mustNotContain(source, 'setDemoMockMode', `${file} mock runtime setter`)
+}
+
+for (const [file, source] of [
+  ['pages/flash/flash.vue', flashPage]
+]) {
+  mustContain(source, 'runOleapAction', `${file} uses page runtime action wrapper`)
+  mustContain(source, 'ensureOleapReady', `${file} uses page runtime SDK readiness`)
+  mustContain(source, 'registerOleapDisposers', `${file} registers page runtime disposers`)
+  mustContain(source, 'disposeOleapDisposers', `${file} disposes page runtime subscriptions`)
+  mustNotContain(source, 'formatSdkError', `${file} local SDK error formatter`)
+  mustNotContain(source, 'async safeRun(action)', `${file} local safeRun`)
+  mustNotContain(source, "OleapBle.init({ logLevel: 'debug' })", `${file} local init`)
   mustNotContain(source, 'getDemoMockMode', `${file} mock runtime getter`)
   mustNotContain(source, 'setDemoMockMode', `${file} mock runtime setter`)
 }

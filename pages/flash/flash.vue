@@ -84,7 +84,12 @@
 
 <script>
 import { OleapBle } from '@/uni_modules/oleap-ble-sdk/index.js'
-import { formatSdkError } from '@/utils/demo-runtime.js'
+import {
+  disposeOleapDisposers,
+  ensureOleapReady,
+  registerOleapDisposers,
+  runOleapAction
+} from '@/utils/oleap-page-runtime.js'
 
 export default {
   data() {
@@ -106,9 +111,10 @@ export default {
     }
   },
   async onLoad() {
-    await this.safeRun(async () => {
-      await OleapBle.init({ logLevel: 'debug' })
-      this.disposers.push(
+    await runOleapAction(this, async () => {
+      await ensureOleapReady()
+      registerOleapDisposers(
+        this,
         OleapBle.onRecordingProgress((event) => {
           if (!event.flash) return
           this.progress = event.progress || 0
@@ -120,24 +126,16 @@ export default {
     await this.loadFiles()
   },
   onUnload() {
-    const disposers = this.disposers.splice(0)
-    disposers.forEach((dispose) => {
-      if (typeof dispose !== 'function') {
-        return
-      }
-      try {
-        dispose()
-      } catch (error) {}
-    })
+    disposeOleapDisposers(this)
   },
   methods: {
     async loadFiles() {
-      await this.safeRun(async () => {
+      await runOleapAction(this, async () => {
         this.files = await OleapBle.listFlashRecordings()
       })
     },
     async download(file) {
-      await this.safeRun(async () => {
+      await runOleapAction(this, async () => {
         this.busy = true
         this.progress = 0
         this.frameCount = 0
@@ -159,7 +157,7 @@ export default {
       })
     },
     async stopDownload() {
-      await this.safeRun(async () => {
+      await runOleapAction(this, async () => {
         await OleapBle.stopFlashDownload()
         this.busy = false
       })
@@ -179,14 +177,6 @@ export default {
       uni.navigateTo({
         url: `/pages/transcript/transcript?filePath=${encodeURIComponent(this.result.filePath)}`
       })
-    },
-    async safeRun(action) {
-      try {
-        this.error = ''
-        await action()
-      } catch (error) {
-        this.error = formatSdkError(error) || '操作失败'
-      }
     }
   }
 }
