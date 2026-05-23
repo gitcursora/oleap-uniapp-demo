@@ -136,7 +136,7 @@ for (const text of [
 
 for (const text of [
   'RECORDING_COMMAND_STOP',
-  'RECORDING_COMMAND_MEETING',
+  'RECORDING_COMMAND_PERSONAL',
   'RECORDING_RESPONSE_START',
   'RECORDING_RESPONSE_STOP',
   'RECORDING_FRAME_HEADER_LENGTH',
@@ -213,7 +213,7 @@ const fixtures = {
   queryBattery: readHexFixture('control/query_battery.hex'),
   writeEq: readHexFixture('control/write_eq_high_bass.hex'),
   reportBattery: readHexFixture('control/report_battery.hex'),
-  startMeeting: readHexFixture('recording/start_meeting.hex'),
+  startPersonal: readHexFixture('recording/start_personal.hex'),
   stopRecording: readHexFixture('recording/stop_recording.hex'),
   startResponse: readHexFixture('recording/start_response_success.hex'),
   stopResponse: readHexFixture('recording/stop_response_app.hex'),
@@ -240,7 +240,7 @@ const reportDp = decodeDp(report.payload.commandPayload.slice(4))
 assert(reportDp.id === 0x03, 'battery report fixture must target DP 0x03')
 assert(reportDp.type === 0x02, 'battery report fixture must use number type')
 
-assertBytesEqual(buildRecordingCommand(0x0181, [0]), fixtures.startMeeting, 'iOS start meeting command mismatch')
+assertBytesEqual(buildRecordingCommand(0x0181, [0]), fixtures.startPersonal, 'iOS start personal command mismatch')
 assertBytesEqual(buildRecordingCommand(0x0081, [1]), fixtures.stopRecording, 'iOS stop recording command mismatch')
 
 const start = decodeRecordingResponse(fixtures.startResponse)
@@ -252,7 +252,7 @@ assert(start.packetLength === 80, 'iOS start fixture packetLength must be 80')
 const stop = decodeRecordingResponse(fixtures.stopResponse)
 assert(stop.kind === 'stop', 'iOS stop fixture must decode as stop response')
 assert(stop.stopReason === 1, 'iOS stop fixture stopReason must be app stop')
-assert(stop.stopReasonScene === 1, 'iOS stop fixture scene must be meeting')
+assert(stop.stopReasonScene === 1, 'iOS stop fixture scene must be personal')
 
 const single = splitFrames(fixtures.singleFrame)
 assert(single.frames.length === 1, 'iOS single OPUS notify must contain one frame')

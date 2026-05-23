@@ -83,14 +83,14 @@ await OleapBle.syncAppTime()
 ## 实时录音
 
 ```js
-await OleapBle.startRecording({ scene: 'meeting' })
+await OleapBle.startRecording({ scene: 'personal' })
 
 const result = await OleapBle.stopRecording({
   format: 'wav'
 })
 ```
 
-`scene` 当前可传 `meeting`、`call`、`media`、`ambient`；`format` 当前支持 `wav` 和 `mp3`。Android native 当前已能完成 start/stop、OPUS 帧切分、临时文件落盘和 WAV/MP3 输出。当前 Android decoder 使用 `*.oleapframes` 作为输入，要求帧布局为 `4B header + 80B OPUS payload`、单声道、16kHz；不满足时会明确返回 `opus_decoder_frame_layout_unsupported` 或 `opus_decoder_channels_unsupported`。iOS native 当前已接入 start/stop、OPUS notify 帧切分、丢包统计、`.opusraw`/`.oleapframes` 落盘和 `OpusDecoder.framework` WAV/MP3 输出；iOS decoder 当前同样要求 `*.oleapframes` 为 `4B header + 80B OPUS payload`、单声道、16kHz，不满足时会明确返回 `opus_decoder_frame_layout_unsupported` 或 `opus_decoder_channels_unsupported`。decoder 返回负值或输出为空时会明确返回 `opus_decode_failed` / `opus_decode_empty_output`，不会伪装成功。
+`scene` 当前可传 `personal`、`call`、`media`、`ambient`；`format` 当前支持 `wav` 和 `mp3`。Android native 当前已能完成 start/stop、OPUS 帧切分、临时文件落盘和 WAV/MP3 输出。当前 Android decoder 使用 `*.oleapframes` 作为输入，要求帧布局为 `4B header + 80B OPUS payload`、单声道、16kHz；不满足时会明确返回 `opus_decoder_frame_layout_unsupported` 或 `opus_decoder_channels_unsupported`。iOS native 当前已接入 start/stop、OPUS notify 帧切分、丢包统计、`.opusraw`/`.oleapframes` 落盘和 `OpusDecoder.framework` WAV/MP3 输出；iOS decoder 当前同样要求 `*.oleapframes` 为 `4B header + 80B OPUS payload`、单声道、16kHz，不满足时会明确返回 `opus_decoder_frame_layout_unsupported` 或 `opus_decoder_channels_unsupported`。decoder 返回负值或输出为空时会明确返回 `opus_decode_failed` / `opus_decode_empty_output`，不会伪装成功。
 
 返回：
 

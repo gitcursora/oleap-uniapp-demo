@@ -32,7 +32,7 @@ const fixtureFiles = [
   'uni_modules/oleap-ble-sdk/test-fixtures/control/query_battery.hex',
   'uni_modules/oleap-ble-sdk/test-fixtures/control/write_eq_high_bass.hex',
   'uni_modules/oleap-ble-sdk/test-fixtures/control/report_battery.hex',
-  'uni_modules/oleap-ble-sdk/test-fixtures/recording/start_meeting.hex',
+  'uni_modules/oleap-ble-sdk/test-fixtures/recording/start_personal.hex',
   'uni_modules/oleap-ble-sdk/test-fixtures/recording/stop_recording.hex',
   'uni_modules/oleap-ble-sdk/test-fixtures/recording/start_response_success.hex',
   'uni_modules/oleap-ble-sdk/test-fixtures/recording/stop_response_app.hex',

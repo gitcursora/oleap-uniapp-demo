@@ -162,10 +162,10 @@ export default {
         connected: false,
         device: null
       },
-      scene: 'meeting',
+      scene: 'personal',
       format: 'wav',
       sceneOptions: [
-        { label: '会议', value: 'meeting' },
+        { label: '个人', value: 'personal' },
         { label: '通话', value: 'call' },
         { label: '媒体', value: 'media' },
         { label: '环境', value: 'ambient' }

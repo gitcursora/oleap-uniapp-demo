@@ -93,19 +93,21 @@
       </view>
       <view v-if="devices.length === 0" class="empty-state">暂无设备</view>
       <view
-        v-for="device in devices"
-        :key="device.deviceId"
-        :class="isConnectedDevice(device) ? 'device-item connected-device' : 'device-item'"
+        v-for="(device, index) in devices"
+        :key="deviceKey(device, index)"
+        :class="deviceItemClass(device)"
         @click="connectDevice(device)"
       >
         <view>
-          <view class="device-name">{{ device.name || 'Oleap 设备' }}</view>
-          <view class="code">{{ device.deviceId }}</view>
+          <view class="device-name">{{ deviceName(device) }}</view>
+          <view v-if="deviceId(device)" class="code">{{ deviceId(device) }}</view>
+          <view v-else class="code missing-id">设备 ID 缺失，请刷新扫描</view>
+          <view class="device-source">{{ deviceSourceLabel(device) }}</view>
         </view>
         <view class="device-side">
-          <text class="rssi">{{ device.rssi || '-' }} dBm</text>
-          <text :class="isConnectedDevice(device) ? 'connected-text' : 'connect-text'">
-            {{ isConnectedDevice(device) ? '已连接' : '连接' }}
+          <text class="rssi">{{ deviceRssiLabel(device) }}</text>
+          <text :class="deviceActionClass(device)">
+            {{ deviceActionLabel(device) }}
           </text>
         </view>
       </view>
@@ -317,10 +319,21 @@ export default {
       registerOleapDisposers(
         this,
         OleapBle.onDeviceFound((device) => {
-          if (!this.devices.some((item) => item.deviceId === device.deviceId)) {
-            this.devices.push(device)
-            this.addEvent(`发现 ${device.name || device.deviceId}`)
+          const normalized = this.normalizeDevice(device)
+          if (!normalized) {
+            this.addEvent('忽略缺少 ID 的设备，请重新扫描')
+            return
           }
+          const existingIndex = this.devices.findIndex((item) => this.deviceId(item) === normalized.deviceId)
+          if (existingIndex < 0) {
+            this.devices.push(normalized)
+          } else {
+            this.devices.splice(existingIndex, 1, {
+              ...this.devices[existingIndex],
+              ...normalized
+            })
+          }
+          this.addEvent(`发现 ${normalized.name || normalized.deviceId}`)
         }),
         OleapBle.onConnectionChanged((event) => {
           this.connected = event.connected
@@ -342,34 +355,100 @@ export default {
       }
     },
     isConnectedDevice(device) {
-      return Boolean(this.connectedDevice?.deviceId && device?.deviceId === this.connectedDevice.deviceId)
+      return Boolean(this.connectedDevice?.deviceId && this.deviceId(device) === this.connectedDevice.deviceId)
+    },
+    deviceId(device) {
+      return `${device?.deviceId || ''}`.trim()
+    },
+    deviceName(device) {
+      return device?.name || 'Oleap 设备'
+    },
+    deviceKey(device, index) {
+      return this.deviceId(device) || `${device?.source || 'device'}-${index}`
+    },
+    isConnectableDevice(device) {
+      return this.deviceId(device).length > 0
+    },
+    deviceItemClass(device) {
+      if (this.isConnectedDevice(device)) {
+        return 'device-item connected-device'
+      }
+      return this.isConnectableDevice(device) ? 'device-item' : 'device-item disabled-device'
+    },
+    deviceActionClass(device) {
+      if (this.isConnectedDevice(device)) {
+        return 'connected-text'
+      }
+      return this.isConnectableDevice(device) ? 'connect-text' : 'disabled-text'
+    },
+    deviceActionLabel(device) {
+      if (this.isConnectedDevice(device)) {
+        return '已连接'
+      }
+      return this.isConnectableDevice(device) ? '连接' : '需扫描'
+    },
+    deviceSourceLabel(device) {
+      if (device?.source === 'bonded') {
+        return '已配对设备'
+      }
+      if (device?.source === 'remembered') {
+        return '上次连接'
+      }
+      return '扫描发现'
+    },
+    deviceRssiLabel(device) {
+      const rssi = Number(device?.rssi || 0)
+      return rssi === 0 ? '信号未知' : `${rssi} dBm`
+    },
+    normalizeDevice(device) {
+      const deviceId = this.deviceId(device)
+      if (!deviceId) {
+        return null
+      }
+      return {
+        deviceId,
+        name: device?.name || 'Oleap 设备',
+        rssi: Number(device?.rssi || 0),
+        manufacturerDataHex: device?.manufacturerDataHex || '',
+        source: device?.source || 'scan'
+      }
+    },
+    normalizeDeviceList(devices) {
+      if (!Array.isArray(devices)) {
+        return []
+      }
+      return devices
+        .map((device) => this.normalizeDevice(device))
+        .filter((device) => device != null)
     },
     preferredDevice(devices) {
-      if (!Array.isArray(devices) || devices.length === 0) {
+      const connectableDevices = this.normalizeDeviceList(devices)
+      if (connectableDevices.length === 0) {
         return null
       }
       const rememberedId = getDemoLastDeviceId('')
       if (rememberedId) {
-        const remembered = devices.find((device) => device.deviceId === rememberedId)
+        const remembered = connectableDevices.find((device) => device.deviceId === rememberedId)
         if (remembered) {
           return remembered
         }
       }
-      return devices.length === 1 ? devices[0] : null
+      return connectableDevices.length === 1 ? connectableDevices[0] : null
     },
     async autoConnectDevice(device, reason) {
-      if (!device || !device.deviceId || this.connected) {
+      const normalized = this.normalizeDevice(device)
+      if (!normalized || this.connected) {
         return false
       }
       this.addEvent(`尝试自动连接${reason}`)
       try {
         await OleapBle.connect({
-          deviceId: device.deviceId,
-          name: device.name || 'Oleap 设备'
+          deviceId: normalized.deviceId,
+          name: normalized.name || 'Oleap 设备'
         })
         return true
       } catch (error) {
-        this.addEvent(`自动连接失败：${device.name || device.deviceId}`)
+        this.addEvent(`自动连接失败：${normalized.name || normalized.deviceId}`)
         return false
       }
     },
@@ -378,10 +457,14 @@ export default {
         return
       }
       const knownDevices = await OleapBle.listKnownDevices().catch(() => [])
-      if (Array.isArray(knownDevices) && knownDevices.length > 0) {
-        this.devices = knownDevices
-        this.addEvent(`已加载 ${knownDevices.length} 台已知 Oleap 设备`)
-        const preferred = this.preferredDevice(knownDevices)
+      const usableKnownDevices = this.normalizeDeviceList(knownDevices)
+      if (Array.isArray(knownDevices) && knownDevices.length > usableKnownDevices.length) {
+        this.addEvent(`${knownDevices.length - usableKnownDevices.length} 台已知设备缺少 ID，已忽略`)
+      }
+      if (usableKnownDevices.length > 0) {
+        this.devices = usableKnownDevices
+        this.addEvent(`已加载 ${usableKnownDevices.length} 台已知 Oleap 设备`)
+        const preferred = this.preferredDevice(usableKnownDevices)
         if (preferred) {
           await this.autoConnectDevice(preferred, preferred.deviceId === getDemoLastDeviceId('') ? '上次设备' : '已知设备')
         }
@@ -432,9 +515,13 @@ export default {
           this.scanning = false
           this.bluetooth = await OleapBle.getBluetoothState().catch(() => this.bluetooth)
           const knownDevices = await OleapBle.listKnownDevices().catch(() => [])
-          if (Array.isArray(knownDevices) && knownDevices.length > 0) {
-            this.devices = knownDevices
-            this.addEvent(`BLE 扫描不可用，已加载 ${knownDevices.length} 台已知设备`)
+          const usableKnownDevices = this.normalizeDeviceList(knownDevices)
+          if (usableKnownDevices.length > 0) {
+            this.devices = usableKnownDevices
+            this.addEvent(`BLE 扫描不可用，已加载 ${usableKnownDevices.length} 台已知设备`)
+          } else if (Array.isArray(knownDevices) && knownDevices.length > 0) {
+            this.devices = []
+            this.addEvent('已知设备缺少 ID，请开启蓝牙后重新扫描')
           }
           throw error
         }
@@ -450,12 +537,18 @@ export default {
       })
     },
     async connectDevice(device) {
+      const normalized = this.normalizeDevice(device)
+      if (!normalized) {
+        this.error = '该设备条目缺少 deviceId，无法直接连接。请点击刷新重新扫描附近设备。'
+        this.addEvent('连接失败：设备 ID 缺失')
+        return
+      }
       if (this.isConnectedDevice(device)) {
-        this.addEvent(`当前已连接 ${device.deviceId}`)
+        this.addEvent(`当前已连接 ${normalized.deviceId}`)
         return
       }
       await this.runAction(async () => {
-        await OleapBle.connect({ deviceId: device.deviceId, name: device.name })
+        await OleapBle.connect({ deviceId: normalized.deviceId, name: normalized.name })
       })
     },
     async disconnectDevice() {
@@ -477,8 +570,11 @@ export default {
         return
       }
       if (key === 'connectFirst') {
-        if (this.devices[0]) {
-          await this.connectDevice(this.devices[0])
+        const first = this.devices.find((device) => this.isConnectableDevice(device))
+        if (first) {
+          await this.connectDevice(first)
+        } else {
+          this.error = '没有可连接的设备，请点击重新扫描'
         }
         return
       }
@@ -818,6 +914,10 @@ export default {
   box-sizing: border-box;
 }
 
+.disabled-device {
+  opacity: 0.62;
+}
+
 .connected-device {
   margin-top: 10rpx;
   border: 1px solid #99d8cb;
@@ -828,6 +928,16 @@ export default {
   color: #111827;
   font-size: 28rpx;
   font-weight: 700;
+}
+
+.missing-id {
+  color: #b45309;
+}
+
+.device-source {
+  margin-top: 6rpx;
+  color: #64748b;
+  font-size: 20rpx;
 }
 
 .device-side {
@@ -846,6 +956,14 @@ export default {
   margin-top: 8rpx;
   color: #116dff;
   font-size: 24rpx;
+  font-weight: 700;
+}
+
+.disabled-text {
+  display: block;
+  margin-top: 8rpx;
+  color: #b45309;
+  font-size: 22rpx;
   font-weight: 700;
 }
 

@@ -4,7 +4,7 @@
       <view class="title">Flash 文件</view>
       <view class="row">
         <text>状态</text>
-        <text class="value">{{ busy ? '下载中' : '空闲' }}</text>
+        <text class="value">{{ statusLabel }}</text>
       </view>
 
       <view class="section-title control-title">输出</view>
@@ -38,7 +38,8 @@
     </view>
 
     <view class="panel">
-      <view v-if="files.length === 0" class="muted">暂无文件</view>
+      <view v-if="loadingFiles" class="muted">正在读取 Flash 文件列表...</view>
+      <view v-else-if="files.length === 0" class="muted">{{ error ? '文件列表读取失败' : '暂无文件' }}</view>
       <view v-for="file in files" :key="file.fileId" class="list-item">
         <view class="row">
           <text>#{{ file.fileId }}</text>
@@ -106,8 +107,16 @@ export default {
       frameCount: 0,
       badFrames: 0,
       result: null,
+      loadingFiles: false,
       error: '',
       disposers: []
+    }
+  },
+  computed: {
+    statusLabel() {
+      if (this.busy) return '下载中'
+      if (this.loadingFiles) return '读取列表'
+      return '空闲'
     }
   },
   async onLoad() {
@@ -131,7 +140,12 @@ export default {
   methods: {
     async loadFiles() {
       await runOleapAction(this, async () => {
-        this.files = await OleapBle.listFlashRecordings()
+        this.loadingFiles = true
+        try {
+          this.files = await OleapBle.listFlashRecordings()
+        } finally {
+          this.loadingFiles = false
+        }
       })
     },
     async download(file) {

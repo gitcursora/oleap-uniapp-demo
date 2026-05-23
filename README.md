@@ -366,17 +366,17 @@ npm run check:p5-ios
 
 当前支持：
 
-- `meeting`
+- `personal`
 - `call`
 - `media`
 - `ambient`
 
-课堂里通常建议先用 `meeting`。
+课堂里通常建议先用 `personal`。
 
 ### 一个标准录音流程
 
 1. 进入实时录音页
-2. 选择 `meeting`
+2. 选择 `personal`
 3. 选择 `wav`
 4. 点击“开始”
 5. 等待几秒
@@ -1545,7 +1545,7 @@ async function loadDeviceStatus() {
  * scene 用来告诉耳机当前录音场景。
  */
 const started = await OleapBle.startRecording({
-  scene: 'meeting'
+  scene: 'personal'
 })
 
 console.log('录音会话', started.sessionId)
@@ -1553,7 +1553,7 @@ console.log('录音会话', started.sessionId)
 
 参数：
 
-- `scene`：录音场景，可选 `meeting`、`call`、`media`、`ambient`。
+- `scene`：录音场景，可选 `personal`、`call`、`media`、`ambient`。
 
 返回：
 
@@ -1608,7 +1608,7 @@ export default {
     return {
       active: false,
       format: 'wav',
-      scene: 'meeting',
+      scene: 'personal',
       progress: {
         durationMs: 0,
         frameCount: 0
@@ -2109,7 +2109,7 @@ const status = {
 
 ```js
 await OleapBle.startRecording({
-  scene: 'meeting'
+  scene: 'personal'
 })
 
 // 这里可以等待用户点击“结束录音”

@@ -86,7 +86,7 @@ const DP_ID_EQ_MODE = 0x81
 const FLASH_BLOCK_BYTES = 32 * 1024
 
 const RECORDING_COMMAND_STOP = 0x0081
-const RECORDING_COMMAND_MEETING = 0x0181
+const RECORDING_COMMAND_PERSONAL = 0x0181
 const RECORDING_COMMAND_CALL = 0x0281
 const RECORDING_COMMAND_MEDIA = 0x0381
 const RECORDING_COMMAND_AMBIENT = 0x0481
@@ -537,7 +537,7 @@ function optionNumber(options: any | null, key: string, fallback: number): numbe
 
 function optionInt(options: any | null, key: string, fallback: Int): Int {
   const value = optionNumber(options, key, fallback)
-  return value as Int
+  return value.toInt()
 }
 
 function optionBoolean(options: any | null, key: string, fallback: boolean = false): boolean {
@@ -1093,8 +1093,18 @@ function bondedOleapDevices(): Array<OleapDeviceInfo> {
       if (!isOleapDeviceName(name)) {
         continue
       }
+      const deviceId = deviceAddressOf(device)
+      if (deviceId.length == 0) {
+        pushDiagnostic('bonded_device_missing_address', {
+          name,
+          androidSdk: Build.VERSION.SDK_INT,
+          targetSdk: appTargetSdkVersion(),
+          permissionMode: usesAndroid12BluetoothPermissions() ? 'android12-bluetooth' : 'legacy-location'
+        })
+        continue
+      }
       devices.push(new OleapDeviceInfo(
-        deviceAddressOf(device),
+        deviceId,
         name,
         0,
         ''
@@ -1480,7 +1490,7 @@ function startServiceDiscovery(gatt: BluetoothGatt, reason: string): void {
     return
   }
   clearServiceDiscoveryRetryTimeout()
-  serviceDiscoveryAttempt = (serviceDiscoveryAttempt + 1) as Int
+  serviceDiscoveryAttempt = (serviceDiscoveryAttempt + 1).toInt()
   try {
     const discoveryStarted = gatt.discoverServices()
     pushDiagnostic('discover_services_start', {
@@ -1594,9 +1604,9 @@ function byteArrayToNumbers(value: ByteArray | null): Array<number> {
 }
 
 function numbersToByteArray(value: Array<number>): ByteArray {
-  const bytes: ByteArray = new ByteArray(value.length as Int)
+  const bytes: ByteArray = new ByteArray(value.length.toInt())
   for (let index: Int = 0; index < value.length; index++) {
-    const normalized = value[index as Int] & 0xff
+    const normalized = value[index] & 0xff
     bytes[index] = normalized.toByte()
   }
   return bytes
@@ -2396,9 +2406,9 @@ function buildFlashDeleteCommand(fileId: number): Array<number> {
 }
 
 function recordingSceneCommandOf(value: any | null): RecordingSceneCommand {
-  const raw = value == null ? 'meeting' : `${value}`
-  if (raw == 'meeting' || raw == '1') {
-    return new RecordingSceneCommand('meeting', RECORDING_COMMAND_MEETING)
+  const raw = value == null ? 'personal' : `${value}`
+  if (raw == 'personal' || raw == '1') {
+    return new RecordingSceneCommand('personal', RECORDING_COMMAND_PERSONAL)
   }
   if (raw == 'call' || raw == '2') {
     return new RecordingSceneCommand('call', RECORDING_COMMAND_CALL)
@@ -3095,7 +3105,7 @@ function ensureRecordingDecodeLayout(session: RecordingSession): void {
 }
 
 function writeAscii(bytes: Array<number>, offset: number, value: string): void {
-  const baseOffset = offset as Int
+  const baseOffset = offset.toInt()
   for (let index: Int = 0; index < value.length; index++) {
     const code = value.charCodeAt(index)
     bytes[baseOffset + index] = (code == null ? 0 : code) & 0xff
@@ -3149,8 +3159,8 @@ function readFully(input: FileInputStream, buffer: ByteArray): Int {
 }
 
 function opusPayloadFromFrame(frame: ByteArray): ByteArray {
-  const payload: ByteArray = new ByteArray(RECORDING_DECODER_FRAME_LEN as Int)
-  const headerLength = RECORDING_FRAME_HEADER_LENGTH as Int
+  const payload: ByteArray = new ByteArray(RECORDING_DECODER_FRAME_LEN.toInt())
+  const headerLength = RECORDING_FRAME_HEADER_LENGTH.toInt()
   for (let index: Int = 0; index < RECORDING_DECODER_FRAME_LEN; index++) {
     payload[index] = frame[index + headerLength]
   }
@@ -3179,10 +3189,10 @@ function decodeRecordingFramesToWav(session: RecordingSession, outputPath: strin
     output = new FileOutputStream(new File(outputPath), false)
     output.write(numbersToByteArray(wavHeaderBytes(0, RECORDING_SAMPLE_RATE, 1, RECORDING_PCM_BITS_PER_SAMPLE)))
 
-    const frame = new ByteArray(RECORDING_DECODER_FRAME_BYTES as Int)
+    const frame = new ByteArray(RECORDING_DECODER_FRAME_BYTES.toInt())
     let readCount = readFully(input, frame)
     while (readCount == RECORDING_DECODER_FRAME_BYTES) {
-      const pcm = decoder.decode(opusPayloadFromFrame(frame), RECORDING_DECODER_FRAME_SAMPLES as Int)
+      const pcm = decoder.decode(opusPayloadFromFrame(frame), RECORDING_DECODER_FRAME_SAMPLES.toInt())
       if (pcm != null) {
         output.write(pcm)
         pcmBytes += pcm.size
@@ -4636,7 +4646,7 @@ export function listFlashRecordings(): Promise<Array<any>> {
       return Promise.resolve(new Array<any>())
     }
     flashHeadFileId = countResponse.fileStartId
-    const count = (countResponse.fileCount > 64 ? 64 : countResponse.fileCount) as Int
+    const count = Math.min(countResponse.fileCount, 64).toInt()
     const fileIds = new Array<number>()
     for (let index: Int = 0; index < count; index++) {
       fileIds.push(normalizeUint32(countResponse.fileStartId + index))

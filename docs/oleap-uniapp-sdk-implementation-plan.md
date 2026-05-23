@@ -187,7 +187,7 @@ uni_modules/oleap-ble-sdk/
       write_eq_high_bass.hex
       report_battery.hex
     recording/
-      start_meeting.hex
+      start_personal.hex
       stop_recording.hex
       start_response_success.hex
       stop_response_app.hex
@@ -307,7 +307,7 @@ OleapBle.clearDiagnostics()
 默认行为：
 
 - `format` 默认 `wav`。
-- `scene` 默认 `meeting`，映射到协议个人录音 `0x01`，后续可扩展 `call/media/ambient`。
+- `scene` 默认 `personal`，映射到协议个人录音 `0x01`，后续可扩展 `call/media/ambient`。
 - `downloadFlashRecording` 默认不删除文件；如 `deleteAfterSuccess=true`，SDK 必须确认目标是系统当前最旧文件或按 SDK 内部队列顺序删除。
 - `startRecording` 期间禁止并发 Flash 下载。
 - Flash 下载期间禁止启动实时录音。
@@ -442,7 +442,7 @@ XX 81
 
 | SDK scene | 协议值 | 说明 |
 |---|---:|---|
-| `meeting` | `0x01` | 个人录音，教学默认 |
+| `personal` | `0x01` | 个人录音，教学默认 |
 | `call` | `0x02` | 通话录音 |
 | `media` | `0x03` | 媒体录音 |
 | `ambient` | `0x04` | 环境录音 |
@@ -762,7 +762,7 @@ type OleapBleError = {
 
 功能：
 
-- 开始会议录音。
+- 开始个人录音。
 - 显示时长、帧数、丢包数。
 - 停止后显示 WAV 文件路径。
 - 播放本地 WAV。
@@ -976,7 +976,7 @@ type OleapBleError = {
 
 - 无耳机时 mock mode 可完成页面开发。
 - 有耳机时真实链路可跑通。
-- 学生只需 5 到 8 个 API 即可完成会议转写 Demo。
+- 学生只需 5 到 8 个 API 即可完成录音转写 Demo。
 
 ## 15. 测试计划
 
@@ -1015,7 +1015,7 @@ iOS 真机：
 ### 15.3 教学验收
 
 - 学生 Demo 从空白项目接入 SDK 不超过 30 分钟。
-- 一次完整会议录音转写流程不需要学生查看协议文档。
+- 一次完整录音转写流程不需要学生查看协议文档。
 - 常见问题能通过 Demo 页面提示定位到权限、连接、录音或转写层。
 
 ## 16. 副作用与风险控制

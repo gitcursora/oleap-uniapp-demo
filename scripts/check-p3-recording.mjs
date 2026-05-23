@@ -58,7 +58,7 @@ if (statSync(decoderAarPath).size < 1024 * 1024) {
 const requiredRecordingStrings = [
   '0.1.0-p4-flash',
   'RECORDING_COMMAND_STOP',
-  'RECORDING_COMMAND_MEETING',
+  'RECORDING_COMMAND_PERSONAL',
   'RECORDING_RESPONSE_START',
   'RECORDING_RESPONSE_STOP',
   'RECORDING_DECODER_FRAME_LEN',
@@ -119,7 +119,7 @@ mustContain(androidBuildGradle, "implementation files('libs/oleap-release.aar')"
 mustContain(androidConfig, '"minSdkVersion": 24', 'Android decoder minSdk guard')
 
 const fixtures = {
-  startMeeting: readHexFixture('recording/start_meeting.hex'),
+  startPersonal: readHexFixture('recording/start_personal.hex'),
   stopRecording: readHexFixture('recording/stop_recording.hex'),
   startResponse: readHexFixture('recording/start_response_success.hex'),
   stopResponse: readHexFixture('recording/stop_response_app.hex'),
@@ -127,7 +127,7 @@ const fixtures = {
   twoFrames: readHexFixture('recording/opus_notify_two_frames.hex')
 }
 
-assertBytesEqual(buildRecordingCommand(0x0181, [0]), fixtures.startMeeting, 'start meeting command mismatch')
+assertBytesEqual(buildRecordingCommand(0x0181, [0]), fixtures.startPersonal, 'start personal command mismatch')
 assertBytesEqual(buildRecordingCommand(0x0081, [1]), fixtures.stopRecording, 'stop recording command mismatch')
 
 const start = decodeRecordingResponse(fixtures.startResponse)
@@ -139,7 +139,7 @@ assert(start.packetLength === 80, 'start fixture packetLength must be 80')
 const stop = decodeRecordingResponse(fixtures.stopResponse)
 assert(stop.kind === 'stop', 'stop fixture must decode as stop response')
 assert(stop.stopReason === 1, 'stop fixture stopReason must be app stop')
-assert(stop.stopReasonScene === 1, 'stop fixture scene must be meeting')
+assert(stop.stopReasonScene === 1, 'stop fixture scene must be personal')
 
 const single = splitFrames(fixtures.singleFrame)
 assert(single.frames.length === 1, 'single OPUS notify must contain one frame')

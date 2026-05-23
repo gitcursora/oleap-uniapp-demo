@@ -8,7 +8,7 @@
 
 - Android 录音 start/stop 命令 codec：命令字大端、参数长度小端。
 - 录音启动响应 `0x1280` 和停止响应 `0x0080` 解析。
-- `meeting/call/media/ambient` 录音场景映射。
+- `personal/call/media/ambient` 录音场景映射。
 - realtime OPUS notify 单帧和多帧 splitter。
 - OPUS 配置解析：bitrate、channels、frame time。
 - 基于 `dataIndex` 的丢包和乱序统计。
@@ -72,7 +72,7 @@ P2 Android control check passed
 当前环境未运行 HBuilderX/UTS Android 编译，也未连接 Android 真机。后续需要在 HBuilderX 中验证：
 
 - Android UTS 编译通过，`FileOutputStream`、`OpusDecoder` 和 BLE callback 类型可用。
-- 真实设备启动会议录音后返回 `0x1280` 成功响应。
+- 真实设备启动个人录音后返回 `0x1280` 成功响应。
 - 连续收到 OPUS notify，并写入 App 私有缓存目录。
 - 停止录音返回 `0x0080` 后关闭文件流并输出 WAV。
 - 断连、超时、快速重连不会留下旧 session 或未关闭文件流。

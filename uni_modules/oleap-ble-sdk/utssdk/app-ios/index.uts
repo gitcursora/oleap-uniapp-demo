@@ -57,7 +57,7 @@ const DP_ID_SN = 0x80
 const DP_ID_EQ_MODE = 0x81
 const FLASH_BLOCK_BYTES = 32 * 1024
 const RECORDING_COMMAND_STOP = 0x0081
-const RECORDING_COMMAND_MEETING = 0x0181
+const RECORDING_COMMAND_PERSONAL = 0x0181
 const RECORDING_COMMAND_CALL = 0x0281
 const RECORDING_COMMAND_MEDIA = 0x0381
 const RECORDING_COMMAND_AMBIENT = 0x0481
@@ -905,8 +905,8 @@ function buildRecordingCommand(command: number, payload: Array<number> | null = 
 }
 
 function recordingSceneCommandOf(value: any | null): any {
-  const raw = value == null ? 'meeting' : `${value}`
-  if (raw == 'meeting' || raw == '1') return { scene: 'meeting', command: RECORDING_COMMAND_MEETING }
+  const raw = value == null ? 'personal' : `${value}`
+  if (raw == 'personal' || raw == '1') return { scene: 'personal', command: RECORDING_COMMAND_PERSONAL }
   if (raw == 'call' || raw == '2') return { scene: 'call', command: RECORDING_COMMAND_CALL }
   if (raw == 'media' || raw == '3') return { scene: 'media', command: RECORDING_COMMAND_MEDIA }
   if (raw == 'ambient' || raw == '4') return { scene: 'ambient', command: RECORDING_COMMAND_AMBIENT }

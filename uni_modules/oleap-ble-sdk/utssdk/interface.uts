@@ -1,6 +1,6 @@
 export type OleapBleLogLevel = 'debug' | 'info' | 'warn' | 'error'
 export type OleapRecordingFormat = 'wav' | 'mp3'
-export type OleapRecordingScene = 'meeting' | 'call' | 'media' | 'ambient'
+export type OleapRecordingScene = 'personal' | 'call' | 'media' | 'ambient'
 
 export type OleapBleInitOptions = {
   logLevel?: OleapBleLogLevel
