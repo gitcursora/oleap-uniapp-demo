@@ -1,0 +1,1200 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Oleap Vibe Coding 实战课 | uni-app + Fastify</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f7f8fa;
+  --surface: #ffffff;
+  --surface-2: #f0f3f6;
+  --border: #e2e6ea;
+  --border-strong: #cbd3db;
+  --text: #101418;
+  --text-2: #35404a;
+  --muted: #687583;
+  --dim: #98a2ad;
+  --primary: #1f6feb;
+  --teal: #0f8a9d;
+  --green: #15803d;
+  --amber: #b45309;
+  --purple: #6d28d9;
+  --red: #b42318;
+  --primary-soft: #edf5ff;
+  --teal-soft: #eaf9fb;
+  --green-soft: #edf8f1;
+  --amber-soft: #fff7ed;
+  --purple-soft: #f4f0ff;
+  --red-soft: #fff1f0;
+  --code-bg: #f3f5f7;
+  --code-text: #18212b;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 6px 16px rgba(16, 24, 40, 0.06);
+  --radius: 8px;
+}
+
+[data-theme="dark"] {
+  --bg: #0c1014;
+  --bg-soft: #121820;
+  --surface: #151b23;
+  --surface-2: #1b2330;
+  --border: #273241;
+  --border-strong: #3a4656;
+  --text: #f4f7fb;
+  --text-2: #d6dee8;
+  --muted: #a5b0bd;
+  --dim: #748091;
+  --primary: #5a9cff;
+  --teal: #2cb3c6;
+  --green: #3fbf71;
+  --amber: #f2a044;
+  --purple: #a78bfa;
+  --red: #ff8a80;
+  --primary-soft: #13233a;
+  --teal-soft: #102b30;
+  --green-soft: #102817;
+  --amber-soft: #2b1e0d;
+  --purple-soft: #211737;
+  --red-soft: #311514;
+  --code-bg: #1b2330;
+  --code-text: #edf2f7;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.32), 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  color: var(--text);
+  background: var(--bg);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.65;
+  letter-spacing: 0;
+}
+
+a { color: inherit; text-decoration: none; }
+button { font: inherit; }
+code, pre {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+code {
+  color: var(--primary);
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  font-size: 0.9em;
+}
+pre {
+  margin: 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  color: var(--code-text);
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+#progress-bar {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 100;
+  width: 0;
+  height: 3px;
+  background: var(--primary);
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  backdrop-filter: blur(12px) saturate(160%);
+  border-bottom: 1px solid var(--border);
+}
+.topbar-inner {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 14px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.brand-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: var(--primary);
+  font-weight: 800;
+}
+.brand-main {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+}
+.brand-sub {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 12px;
+  color: var(--text-2);
+  background: var(--surface);
+  font-size: 12.5px;
+}
+.pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+}
+.icon-btn {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-2);
+  background: var(--surface);
+  cursor: pointer;
+}
+.icon-btn:hover { border-color: var(--border-strong); background: var(--surface-2); }
+
+.layout {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 32px 28px 96px;
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 44px;
+}
+.side {
+  position: sticky;
+  top: 74px;
+  align-self: start;
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  padding-right: 8px;
+}
+.side h4 {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+.side-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.side-nav a {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 10px;
+  color: var(--text-2);
+  border-left: 2px solid transparent;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.side-nav a:hover,
+.side-nav a.active {
+  color: var(--primary);
+  background: var(--primary-soft);
+  border-left-color: var(--primary);
+}
+.nav-num {
+  color: var(--dim);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+}
+
+.hero {
+  padding: 44px 0 58px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 68px;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 22px;
+  padding: 5px 12px;
+  color: var(--primary);
+  background: var(--primary-soft);
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--border));
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.badge::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+h1 {
+  max-width: 900px;
+  margin: 0 0 12px;
+  color: var(--text);
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1.16;
+  letter-spacing: 0;
+}
+.hero-subtitle {
+  max-width: 860px;
+  margin: 0 0 22px;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1.65;
+}
+.hero-lead {
+  max-width: 780px;
+  margin: 0 0 32px;
+  color: var(--text-2);
+  font-size: 15.5px;
+}
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--border);
+  gap: 1px;
+}
+.stat-card {
+  padding: 20px;
+  background: var(--surface);
+}
+.stat-value {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--primary);
+  font-size: 28px;
+  font-weight: 800;
+}
+.stat-label { color: var(--muted); font-size: 13px; }
+
+.content-section {
+  margin-bottom: 80px;
+  scroll-margin-top: 92px;
+}
+.sec-head { margin-bottom: 24px; }
+.sec-num {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 700;
+}
+h2 {
+  margin: 0 0 6px;
+  color: var(--text);
+  font-size: 24px;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+.sec-desc {
+  max-width: 760px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 14.5px;
+}
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin-bottom: 28px;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.card-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.card-grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px;
+  box-shadow: var(--shadow);
+}
+.card:hover { border-color: var(--border-strong); }
+.card-kicker {
+  display: inline-flex;
+  margin-bottom: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--primary);
+  background: var(--primary-soft);
+  border: 1px solid color-mix(in srgb, var(--primary) 26%, var(--border));
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 700;
+}
+.card-kicker.green { color: var(--green); background: var(--green-soft); border-color: color-mix(in srgb, var(--green) 28%, var(--border)); }
+.card-kicker.teal { color: var(--teal); background: var(--teal-soft); border-color: color-mix(in srgb, var(--teal) 28%, var(--border)); }
+.card-kicker.amber { color: var(--amber); background: var(--amber-soft); border-color: color-mix(in srgb, var(--amber) 28%, var(--border)); }
+.card-kicker.purple { color: var(--purple); background: var(--purple-soft); border-color: color-mix(in srgb, var(--purple) 28%, var(--border)); }
+.card h3 {
+  margin: 0 0 9px;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.45;
+}
+.card p {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 14px;
+}
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.list li {
+  position: relative;
+  padding-left: 16px;
+  color: var(--text-2);
+  font-size: 13.5px;
+}
+.list li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.72em;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.flow {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+.flow-step {
+  position: relative;
+  min-height: 134px;
+  padding: 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.flow-step::after {
+  content: "";
+  position: absolute;
+  right: -10px;
+  top: 50%;
+  width: 18px;
+  height: 2px;
+  background: var(--border-strong);
+}
+.flow-step:last-child::after { display: none; }
+.flow-num {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 12px;
+  color: #fff;
+  background: var(--primary);
+  border-radius: 50%;
+  font-weight: 800;
+  font-size: 12px;
+}
+.flow-title {
+  margin-bottom: 6px;
+  color: var(--text);
+  font-weight: 700;
+}
+.flow-desc {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.timeline {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-left: 28px;
+}
+.timeline::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  background: var(--border-strong);
+}
+.tl-item {
+  position: relative;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.tl-item::before {
+  content: "";
+  position: absolute;
+  left: -27px;
+  top: 24px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 3px solid var(--primary);
+}
+.tl-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+.tl-title {
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 800;
+}
+.tl-time {
+  white-space: nowrap;
+  color: var(--primary);
+  background: var(--primary-soft);
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--border));
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 700;
+}
+.tl-body {
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+.callout {
+  padding: 18px 20px;
+  color: var(--text-2);
+  background: var(--amber-soft);
+  border: 1px solid color-mix(in srgb, var(--amber) 30%, var(--border));
+  border-left: 4px solid var(--amber);
+  border-radius: var(--radius);
+}
+.callout strong { color: var(--text); }
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+}
+th, td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+th {
+  color: var(--text);
+  background: var(--surface-2);
+  font-size: 12.5px;
+}
+td {
+  color: var(--text-2);
+  font-size: 13.5px;
+}
+tr:last-child td { border-bottom: none; }
+
+.prompt-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+.prompt-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 18px;
+  cursor: pointer;
+  user-select: none;
+}
+.prompt-title {
+  color: var(--text);
+  font-weight: 800;
+}
+.prompt-meta {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.prompt-toggle {
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+}
+.prompt-body {
+  display: none;
+  padding: 0 18px 18px;
+}
+.prompt-card.open .prompt-body { display: block; }
+
+.checklist {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.check-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 13.5px;
+}
+.check-box {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border-radius: 4px;
+  border: 2px solid var(--green);
+  background: var(--green-soft);
+  margin-top: 2px;
+}
+
+.footer {
+  border-top: 1px solid var(--border);
+  padding: 42px 28px 58px;
+  text-align: center;
+  color: var(--muted);
+}
+.footer h2 {
+  margin-bottom: 8px;
+}
+
+@media (max-width: 1060px) {
+  .layout { grid-template-columns: 1fr; }
+  .side { display: none; }
+  .stats-grid, .card-grid.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .flow { grid-template-columns: 1fr; }
+  .flow-step::after { display: none; }
+}
+@media (max-width: 700px) {
+  .topbar-inner, .layout { padding-left: 18px; padding-right: 18px; }
+  h1 { font-size: 30px; }
+  .brand-sub, .pill { display: none; }
+  .stats-grid, .card-grid, .card-grid.three, .card-grid.four, .split, .checklist { grid-template-columns: 1fr; }
+  .tl-top { flex-direction: column; }
+}
+
+@media print {
+  .topbar, .side, #progress-bar { display: none; }
+  .layout { display: block; max-width: none; padding: 0; }
+  .content-section, .hero { page-break-after: always; margin: 0; padding: 28px; border: none; }
+  body { background: #fff; color: #111; }
+}
+</style>
+</head>
+<body>
+<div id="progress-bar" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="#hero" aria-label="返回开场">
+      <div class="brand-mark">O</div>
+      <div>
+        <div class="brand-main">Oleap Vibe Coding 实战课</div>
+        <div class="brand-sub">uni-app + Fastify + 真实耳机录音</div>
+      </div>
+    </a>
+    <div class="topbar-actions">
+      <span class="pill"><span class="pill-dot"></span>2026-05-25 课堂版</span>
+      <button class="icon-btn" id="theme-toggle" aria-label="切换明暗主题">◐</button>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="side" aria-label="目录">
+    <h4>目录</h4>
+    <nav class="side-nav" id="side-nav">
+      <a href="#hero"><span class="nav-num">00</span>课程目标</a>
+      <a href="#why"><span class="nav-num">01</span>为什么这样做</a>
+      <a href="#architecture"><span class="nav-num">02</span>双项目架构</a>
+      <a href="#agenda"><span class="nav-num">03</span>当天节奏</a>
+      <a href="#morning"><span class="nav-num">04</span>上午任务</a>
+      <a href="#backend"><span class="nav-num">05</span>后端速成</a>
+      <a href="#frontend"><span class="nav-num">06</span>App 联调</a>
+      <a href="#topics"><span class="nav-num">07</span>实战命题</a>
+      <a href="#vibe"><span class="nav-num">08</span>Vibe Coding</a>
+      <a href="#week"><span class="nav-num">09</span>一周开发</a>
+      <a href="#acceptance"><span class="nav-num">10</span>验收答辩</a>
+      <a href="#trouble"><span class="nav-num">11</span>排错地图</a>
+    </nav>
+  </aside>
+
+  <main>
+    <section class="hero" id="hero">
+      <span class="badge">课堂目标</span>
+      <h1>让真实耳机录音进入学生自己的业务系统</h1>
+      <p class="hero-subtitle">今天先跑通最小闭环：Oleap 耳机录音，uni-app 拿到 filePath，Fastify 返回业务结果，App 页面展示。</p>
+      <p class="hero-lead">这不是单纯改页面，也不是从零写蓝牙。我们要练的是：用 Vibe Coding 加速二次开发，把一个硬件能力包装成具体场景里的小产品。</p>
+
+      <div class="stats-grid">
+        <div class="stat-card"><span class="stat-value">6h</span><span class="stat-label">当天课堂实操</span></div>
+        <div class="stat-card"><span class="stat-value">2</span><span class="stat-label">前端 + 后端项目</span></div>
+        <div class="stat-card"><span class="stat-value">7</span><span class="stat-label">README 实战命题</span></div>
+        <div class="stat-card"><span class="stat-value">1w</span><span class="stat-label">课后二次开发周期</span></div>
+      </div>
+    </section>
+
+    <section id="why" class="content-section">
+      <div class="sec-head">
+        <span class="sec-num">// 01</span>
+        <h2>为什么这门课要这样做</h2>
+        <p class="sec-desc">学生不只是学习某个框架，而是在学习把真实设备能力变成业务产品的路径。</p>
+      </div>
+      <div class="divider"></div>
+
+      <div class="card-grid three">
+        <div class="card">
+          <span class="card-kicker">真实输入</span>
+          <h3>不用假数据糊弄自己</h3>
+          <p>录音来自 Oleap 耳机，App 必须完成扫描、连接、录音和文件输出。真实链路通了，后面的业务才有意义。</p>
+        </div>
+        <div class="card">
+          <span class="card-kicker teal">工程拆分</span>
+          <h3>前端和后端各司其职</h3>
+          <p>uni-app 负责采集和展示，Fastify 负责接收、处理和保存。学生会第一次看见完整应用系统的形状。</p>
+        </div>
+        <div class="card">
+          <span class="card-kicker green">AI 加速</span>
+          <h3>Vibe Coding 不是代写</h3>
+          <p>AI 可以帮忙生成页面、接口和提示词，但学生必须能运行、验证、解释和修正。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="architecture" class="content-section">
+      <div class="sec-head">
+        <span class="sec-num">// 02</span>
+        <h2>双项目架构</h2>
+        <p class="sec-desc">明天上课时，VSCode workspace 里建议放两个兄弟项目。</p>
+      </div>
+      <div class="divider"></div>
+
+      <div class="flow">
+        <div class="flow-step">
+          <div class="flow-num">1</div>
+          <div class="flow-title">Oleap 耳机</div>
+          <div class="flow-desc">提供真实录音、Flash 文件和设备状态。</div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">2</div>
+          <div class="flow-title">uni-app</div>
+          <div class="flow-desc">扫描连接、开始录音、停止录音。</div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">3</div>
+          <div class="flow-title">filePath</div>
+          <div class="flow-desc">业务链路最关键的数据入口。</div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">4</div>
+          <div class="flow-title">Fastify</div>
+          <div class="flow-desc">接收请求或上传文件，返回处理结果。</div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">5</div>
+          <div class="flow-title">业务页面</div>
+          <div class="flow-desc">展示转写、摘要、翻译、标签、建议。</div>
+        </div>
+      </div>
+
+      <div class="split" style="margin-top:16px">
+        <div class="card">
+          <span class="card-kicker">oleap-uniapp-demo</span>
+          <h3>手机端</h3>
+          <ul class="list">
+            <li>用 HBuilderX 运行到 Android 真机</li>
+            <li>学生主要改 <code>pages/</code> 和 <code>utils/</code></li>
+            <li>优先改 <code>pages/transcript/transcript.vue</code></li>
+            <li>不要一上来改 <code>uni_modules/oleap-ble-sdk/utssdk</code></li>
+          </ul>
+        </div>
+        <div class="card">
+          <span class="card-kicker purple">oleap-fastify-demo</span>
+          <h3>后端</h3>
+          <ul class="list">
+            <li>用 VSCode 和 Node.js 启动</li>
+            <li>学生主要改 <code>src/routes/</code> 和 <code>src/services/</code></li>
+            <li>先用 mock 数据跑通，再考虑真实 AI 接口</li>
+            <li>手机访问时写电脑 IP，不写 localhost</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="agenda" class="content-section">
+      <div class="sec-head">
+        <span class="sec-num">// 03</span>
+        <h2>当天节奏：上午设备链路，下午后端闭环</h2>
+        <p class="sec-desc">一天时间不够做完整产品，所以目标是让每组都启动自己的 MVP。</p>
+      </div>
+      <div class="divider"></div>
+
+      <div class="timeline">
+        <div class="tl-item">
+          <div class="tl-top"><div class="tl-title">开场：讲清楚今天只做一条主链路</div><div class="tl-time">09:00-09:20</div></div>
+          <div class="tl-body">不要上来发散创意，先知道今天要跑通什么。</div>
+        </div>
+        <div class="tl-item">
+          <div class="tl-top"><div class="tl-title">真机：运行 uni-app，连接耳机，完成录音</div><div class="tl-time">09:20-10:40</div></div>
+          <div class="tl-body">每组至少拿到一次真实 <code>audio.filePath</code>。</div>
+        </div>
+        <div class="tl-item">
+          <div class="tl-top"><div class="tl-title">选题：从 README 里确定一个实战命题</div><div class="tl-time">10:40-12:00</div></div>
+          <div class="tl-body">写清目标用户、场景、录音变成什么、页面展示什么。</div>
+        </div>
+        <div class="tl-item">
+          <div class="tl-top"><div class="tl-title">后端：Fastify 启动、查 IP、手机访问 /health</div><div class="tl-time">14:00-15:00</div></div>
+          <div class="tl-body">先让手机能访问电脑后端，再写 uni-app 请求。</div>
+        </div>
+        <div class="tl-item">
+          <div class="tl-top"><div class="tl-title">联调：App 请求 Fastify，展示业务结果</div><div class="tl-time">15:00-16:20</div></div>
+          <div class="tl-body">先用 <code>uni.request</code>，再用 <code>uni.uploadFile</code>。</div>
+        </div>
+        <div class="tl-item">
+          <div class="tl-top"><div class="tl-title">展示：每组说明选题和下一周计划</div><div class="tl-time">16:20-17:00</div></div>
+          <div class="tl-body">当天结束不要求完整，但必须知道课后一周要做什么。</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="morning" class="content-section">
+      <div class="sec-head">
+        <span class="sec-num">// 04</span>
+        <h2>上午任务：不要急着改页面，先拿到 filePath</h2>
+        <p class="sec-desc">上午唯一核心成果：证明真实设备链路通了。</p>
+      </div>
+      <div class="divider"></div>
+
+      <div class="card-grid">
+        <div class="card">
+          <span class="card-kicker green">必须完成</span>
+          <h3>真机链路检查</h3>
+          <div class="checklist">
+            <div class="check-item"><span class="check-box"></span>Android 真机运行 App</div>
+            <div class="check-item"><span class="check-box"></span>蓝牙权限已授权</div>
+            <div class="check-item"><span class="check-box"></span>扫描到 Oleap 耳机</div>
+            <div class="check-item"><span class="check-box"></span>成功连接设备</div>
+            <div class="check-item"><span class="check-box"></span>开始并停止录音</div>
+            <div class="check-item"><span class="check-box"></span>拿到 WAV/MP3 路径</div>
+          </div>
+        </div>
+        <div class="card">
+          <span class="card-kicker amber">教师提醒</span>
+          <h3>上午不要让学生陷入这些坑</h3>
+          <ul class="list">
+            <li>不要一开始改 SDK 底层</li>
+            <li>不要先做复杂 UI</li>
+            <li>不要先接真实大模型</li>
+            <li>不要用没有真实 filePath 的假演示替代主链路</li>
+          </ul>
+        </div>
+      </div>
+
+      <div style="margin-top:16px">
+        <pre><code>await OleapBle.startRecording({ scene: 'personal' })
+
+const audio = await OleapBle.stopRecording({
+  format: 'wav'
+})
+
+console.log('业务入口 filePath:', audio.filePath)</code></pre>
+      </div>
+    </section>
+
+    <section id="backend" class="content-section">
+      <div class="sec-head">
+        <span class="sec-num">// 05</span>
+        <h2>下午第一段：Fastify 后端速成</h2>
+        <p class="sec-desc">后端不是额外知识点，它是录音进入业务系统的入口。</p>
+      </div>
+      <div class="divider"></div>
+
+      <div class="split">
+        <div>
+          <div class="card">
+            <span class="card-kicker">启动顺序</span>
+            <h3>先查 IP，再启动服务</h3>
+            <pre><code>cd oleap-fastify-demo
+npm install
+npm run check
+npm run ip
+npm run dev</code></pre>
+          </div>
+        </div>
+        <div>
+          <div class="callout">
+            <strong>课堂口令：</strong>手机访问后端，写电脑 IP，不写 localhost。先用手机浏览器打开 <code>/health</code>，能打开再写 uni-app 请求。
+          </div>
+          <div class="card" style="margin-top:16px">
+            <span class="card-kicker teal">关键接口</span>
+            <ul class="list">
+              <li><code>GET /health</code> 检查服务</li>
+              <li><code>POST /api/ai/process</code> mock 业务处理</li>
+              <li><code>POST /api/audio/upload</code> 上传音频文件</li>
+              <li><code>GET /api/records</code> 查看本地记录</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="frontend" class="content-section">
+      <div class="sec-head">
+        <span class="sec-num">// 06</span>
+        <h2>下午第二段：App 调后端</h2>
+        <p class="sec-desc">先用 filePath 字符串跑通，再做真实上传。步子小一点，成功率高很多。</p>
+      </div>
+      <div class="divider"></div>
+
+      <div class="card-grid">
+        <div class="card">
+          <span class="card-kicker green">第一步</span>
+          <h3>uni.request：确认 App 能调后端</h3>
+          <pre><code>const API_BASE_URL = 'http://192.168.2.118:3000'
+
+uni.request({
+  url: `${API_BASE_URL}/api/ai/process`,
+  method: 'POST',
+  data: {
+    topic: '语音知识库系统',
+    filePath: this.filePath
+  },
+  success: (res) => {
+    const result = res.data.data
+    this.summary = result.summary
+    this.keywords = result.keywords
+  }
+})</code></pre>
+        </div>
+        <div class="card">
+          <span class="card-kicker purple">第二步</span>
+          <h3>uni.uploadFile：上传真实录音文件</h3>
+          <pre><code>uni.uploadFile({
+  url: `${API_BASE_URL}/api/audio/upload`,
+  filePath: this.filePath,
+  name: 'audio',
+  formData: {
+    topic: '语音知识库系统',
+    scene: 'classroom'
+  },
+  success: (res) => {
+    const body = JSON.parse(res.data)
+    this.summary = body.data.result.summary
+  }
+})</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="topics" class="content-section">
+      <div class="sec-head">
+        <span class="sec-num">// 07</span>
+        <h2>README 实战命题怎么选</h2>
+        <p class="sec-desc">一周作业要控制范围，不要把 MVP 设计成毕业设计。</p>
+      </div>
+      <div class="divider"></div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>命题</th><th>一周内建议做法</th><th>后端接口方向</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>黄鹂智声 App 功能重构</td><td>优化首页、录音入口、转写结果页</td><td><code>/api/records</code>、mock 记录列表</td></tr>
+            <tr><td>语音翻译助手</td><td>展示原文、译文、重点句</td><td><code>/api/translate/create</code></td></tr>
+            <tr><td>语音知识库系统</td><td>摘要、关键词、复习问题、历史记录</td><td><code>/api/knowledge/create</code></td></tr>
+            <tr><td>语音内容生成工具</td><td>生成标题、文章、脚本、发布建议</td><td><code>/api/content/generate</code></td></tr>
+            <tr><td>语音客服 / 销售助手</td><td>客户需求、痛点、跟进计划</td><td><code>/api/sales/analyze</code></td></tr>
+            <tr><td>语音情绪分析工具</td><td>情绪标签、依据、可视化数据</td><td><code>/api/emotion/analyze</code></td></tr>
+            <tr><td>开放创新命题</td><td>先定义用户和场景，再做最小链路</td><td>自定义 3 个以内接口</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="vibe" class="content-section">
+      <div class="sec-head">
+        <span class="sec-num">// 08</span>
+        <h2>Vibe Coding：怎么问 AI 才不容易跑偏</h2>
+        <p class="sec-desc">一次只让 AI 改一小块，跑通后再进入下一步。</p>
+      </div>
+      <div class="divider"></div>
+
+      <div class="card-grid">
+        <div class="prompt-card open" id="prompt-1">
+          <div class="prompt-head" role="button" tabindex="0" onclick="togglePrompt('prompt-1')">
+            <div><div class="prompt-title">提示词 1：设计 MVP</div><div class="prompt-meta">用于选题后的第一步</div></div>
+            <span class="prompt-toggle">展开</span>
+          </div>
+          <div class="prompt-body">
+            <pre><code>我正在基于 uni-app + Oleap 耳机录音 + Fastify 后端做二次开发。
+我选择的命题是「语音知识库系统」。
+
+请帮我设计一个一周内能完成的 MVP：
+1. 用户是谁
+2. 使用场景是什么
+3. 页面需要哪些模块
+4. 后端需要哪些接口
+5. 录音 filePath 如何进入业务流程
+
+要求：不要修改 Oleap BLE SDK 底层。</code></pre>
+          </div>
+        </div>
+
+        <div class="prompt-card open" id="prompt-2">
+          <div class="prompt-head" role="button" tabindex="0" onclick="togglePrompt('prompt-2')">
+            <div><div class="prompt-title">提示词 2：新增后端接口</div><div class="prompt-meta">用于 Fastify 二次开发</div></div>
+            <span class="prompt-toggle">展开</span>
+          </div>
+          <div class="prompt-body">
+            <pre><code>请帮我在 Fastify 项目里新增接口：
+POST /api/knowledge/create
+
+要求：
+1. 新建 src/routes/knowledge.js
+2. 在 src/app.js 注册
+3. 接收 course、text、filePath
+4. 返回 summary、keywords、reviewQuestions
+5. 先用 mock 数据
+6. 代码适合初学者理解</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout" style="margin-top:16px">
+        <strong>提醒学生：</strong>AI 生成代码后，必须自己运行、看报错、做最小修改。Vibe Coding 的价值不是省掉理解，而是缩短从想法到可验证结果的距离。
+      </div>
+    </section>
+
+    <section id="week" class="content-section">
+      <div class="sec-head">
+        <span class="sec-num">// 09</span>
+        <h2>课后一周开发计划</h2>
+        <p class="sec-desc">把大任务拆成每天能检查的进度，学生才不会最后一天一起崩。</p>
+      </div>
+      <div class="divider"></div>
+
+      <div class="timeline">
+        <div class="tl-item"><div class="tl-top"><div class="tl-title">第 1 天：确定 MVP</div><div class="tl-time">D1</div></div><div class="tl-body">写清项目名称、用户、场景、页面列表、后端接口列表。</div></div>
+        <div class="tl-item"><div class="tl-top"><div class="tl-title">第 2 天：改造 transcript 页面</div><div class="tl-time">D2</div></div><div class="tl-body">显示 filePath、按钮、loading、error、mock 结果展示。</div></div>
+        <div class="tl-item"><div class="tl-top"><div class="tl-title">第 3 天：新增 Fastify 业务接口</div><div class="tl-time">D3</div></div><div class="tl-body">在 <code>src/routes</code> 下新增路由，用 curl 测试通过。</div></div>
+        <div class="tl-item"><div class="tl-top"><div class="tl-title">第 4 天：前后端联调</div><div class="tl-time">D4</div></div><div class="tl-body">App 能请求后端，页面能展示结果。</div></div>
+        <div class="tl-item"><div class="tl-top"><div class="tl-title">第 5 天：尝试真实上传</div><div class="tl-time">D5</div></div><div class="tl-body">用 <code>uni.uploadFile</code> 上传录音文件，失败也要保留 request 链路。</div></div>
+        <div class="tl-item"><div class="tl-top"><div class="tl-title">第 6 天：完善体验</div><div class="tl-time">D6</div></div><div class="tl-body">补错误提示、历史记录、复制结果、页面排版。</div></div>
+        <div class="tl-item"><div class="tl-top"><div class="tl-title">第 7 天：准备演示</div><div class="tl-time">D7</div></div><div class="tl-body">准备 5 分钟答辩：选题、现场录音、后端处理、结果展示。</div></div>
+      </div>
+    </section>
+
+    <section id="acceptance" class="content-section">
+      <div class="sec-head">
+        <span class="sec-num">// 10</span>
+        <h2>验收答辩标准</h2>
+        <p class="sec-desc">展示不是讲概念，必须让老师看到链路跑起来。</p>
+      </div>
+      <div class="divider"></div>
+
+      <div class="card-grid">
+        <div class="card">
+          <span class="card-kicker green">最低通过</span>
+          <h3>每组必须演示</h3>
+          <ul class="list">
+            <li>说明选择了 README 哪个命题</li>
+            <li>现场连接耳机并录音</li>
+            <li>展示录音文件 filePath</li>
+            <li>请求 Fastify 后端</li>
+            <li>展示业务结果页面</li>
+          </ul>
+        </div>
+        <div class="card">
+          <span class="card-kicker purple">加分项</span>
+          <h3>做得更像一个产品</h3>
+          <ul class="list">
+            <li>真实上传音频成功</li>
+            <li>有历史记录或结果保存</li>
+            <li>错误提示清楚</li>
+            <li>页面和命题场景匹配</li>
+            <li>能清楚说明 AI 辅助开发过程</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="trouble" class="content-section">
+      <div class="sec-head">
+        <span class="sec-num">// 11</span>
+        <h2>排错地图</h2>
+        <p class="sec-desc">课堂现场最省时间的方式：先判断问题卡在哪一层。</p>
+      </div>
+      <div class="divider"></div>
+
+      <div class="card-grid three">
+        <div class="card">
+          <span class="card-kicker amber">设备层</span>
+          <h3>扫描不到或连不上</h3>
+          <ul class="list">
+            <li>检查蓝牙和权限</li>
+            <li>确认耳机在附近且可连接</li>
+            <li>重启 App 或蓝牙</li>
+          </ul>
+        </div>
+        <div class="card">
+          <span class="card-kicker teal">网络层</span>
+          <h3>手机访问不了后端</h3>
+          <ul class="list">
+            <li>同一 WiFi 或手机热点</li>
+            <li>不用 localhost，用电脑 IP</li>
+            <li>Windows 防火墙允许 Node.js</li>
+          </ul>
+        </div>
+        <div class="card">
+          <span class="card-kicker red">接口层</span>
+          <h3>请求 404 或 500</h3>
+          <ul class="list">
+            <li>检查 <code>app.register</code> 的 prefix</li>
+            <li>检查请求方法 GET/POST</li>
+            <li>看后端终端错误日志</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer class="footer">
+  <h2>今天先跑通，课后再打磨</h2>
+  <p>真实耳机录音进入业务系统，是这次二次开发的主线。</p>
+</footer>
+
+<script>
+(function () {
+  const saved = localStorage.getItem('oleap-slide-theme');
+  const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  document.documentElement.setAttribute('data-theme', saved || (prefersDark ? 'dark' : 'light'));
+})();
+
+document.addEventListener('DOMContentLoaded', function () {
+  const themeToggle = document.getElementById('theme-toggle');
+  if (themeToggle) {
+    themeToggle.addEventListener('click', function () {
+      const current = document.documentElement.getAttribute('data-theme') || 'light';
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('oleap-slide-theme', next);
+    });
+  }
+
+  const bar = document.getElementById('progress-bar');
+  function updateProgress() {
+    const doc = document.documentElement;
+    const height = doc.scrollHeight - window.innerHeight;
+    const pct = height > 0 ? Math.min(100, (window.scrollY / height) * 100) : 0;
+    bar.style.width = pct + '%';
+  }
+  window.addEventListener('scroll', updateProgress, { passive: true });
+  updateProgress();
+
+  const sections = document.querySelectorAll('section[id]');
+  const links = document.querySelectorAll('#side-nav a');
+  const observer = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (!entry.isIntersecting) return;
+      const id = entry.target.id;
+      links.forEach(function (link) {
+        link.classList.toggle('active', link.getAttribute('href') === '#' + id);
+      });
+    });
+  }, { rootMargin: '-22% 0px -68% 0px', threshold: 0 });
+  sections.forEach(function (section) { observer.observe(section); });
+
+  document.querySelectorAll('a[href^="#"]').forEach(function (link) {
+    link.addEventListener('click', function (event) {
+      const target = document.querySelector(link.getAttribute('href'));
+      if (!target) return;
+      event.preventDefault();
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+
+  document.querySelectorAll('.prompt-head[role="button"]').forEach(function (head) {
+    head.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        head.click();
+      }
+    });
+  });
+});
+
+function togglePrompt(id) {
+  const card = document.getElementById(id);
+  if (!card) return;
+  card.classList.toggle('open');
+}
+</script>
+</body>
+</html>
