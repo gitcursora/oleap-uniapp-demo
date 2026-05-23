@@ -89,14 +89,7 @@ for (const text of [
 }
 
 for (const [file, source] of [
-  ['pages/index/index.vue', indexPage]
-]) {
-  mustContain(source, 'formatSdkError', `${file} formats SDK errors`)
-  mustNotContain(source, 'getDemoMockMode', `${file} mock runtime getter`)
-  mustNotContain(source, 'setDemoMockMode', `${file} mock runtime setter`)
-}
-
-for (const [file, source] of [
+  ['pages/index/index.vue', indexPage],
   ['pages/device/device.vue', devicePage],
   ['pages/record/record.vue', recordPage],
   ['pages/flash/flash.vue', flashPage]
@@ -116,8 +109,8 @@ for (const [file, source] of [
 for (const text of [
   'initializeSdk',
   'installSubscriptions',
-  'disposeSubscriptions',
   'bootstrapKnownDevices',
+  'runAction',
   'OleapBle.listKnownDevices',
   'setDemoLastDeviceId',
   'getDemoLastDeviceId',

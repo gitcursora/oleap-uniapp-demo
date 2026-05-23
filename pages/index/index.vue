@@ -124,7 +124,13 @@
 
 <script>
 import { OleapBle } from '@/uni_modules/oleap-ble-sdk/index.js'
-import { formatSdkError, getDemoLastDeviceId, setDemoLastDeviceId } from '@/utils/demo-runtime.js'
+import { getDemoLastDeviceId, setDemoLastDeviceId } from '@/utils/demo-runtime.js'
+import {
+  disposeOleapDisposers,
+  ensureOleapReady,
+  registerOleapDisposers,
+  runOleapAction
+} from '@/utils/oleap-page-runtime.js'
 
 export default {
   data() {
@@ -292,13 +298,13 @@ export default {
     await this.initializeSdk()
   },
   onUnload() {
-    this.disposeSubscriptions()
+    disposeOleapDisposers(this)
     this.clearScanTimer()
   },
   methods: {
     async initializeSdk() {
-      await this.safeRun(async () => {
-        await OleapBle.init({ logLevel: 'debug' })
+      await this.runAction(async () => {
+        await ensureOleapReady()
         this.bluetooth = await OleapBle.getBluetoothState()
         this.applyConnectionState()
         this.installSubscriptions()
@@ -307,8 +313,9 @@ export default {
       })
     },
     installSubscriptions() {
-      this.disposeSubscriptions()
-      this.disposers.push(
+      disposeOleapDisposers(this)
+      registerOleapDisposers(
+        this,
         OleapBle.onDeviceFound((device) => {
           if (!this.devices.some((item) => item.deviceId === device.deviceId)) {
             this.devices.push(device)
@@ -327,17 +334,6 @@ export default {
           this.addEvent(`DP 上报 ${event.name || event.dpId}`)
         })
       )
-    },
-    disposeSubscriptions() {
-      const disposers = this.disposers.splice(0)
-      disposers.forEach((dispose) => {
-        if (typeof dispose !== 'function') {
-          return
-        }
-        try {
-          dispose()
-        } catch (error) {}
-      })
     },
     clearScanTimer() {
       if (this.scanTimer) {
@@ -410,7 +406,7 @@ export default {
       this.connectedDevice = connection.device || null
     },
     async requestPermissions() {
-      await this.safeRun(async () => {
+      await this.runAction(async () => {
         const result = await OleapBle.requestPermissions()
         this.bluetooth = await OleapBle.getBluetoothState()
         const granted = result?.permissionGranted === true || result?.bluetooth === true
@@ -418,13 +414,13 @@ export default {
       })
     },
     async refreshBluetoothState() {
-      await this.safeRun(async () => {
+      await this.runAction(async () => {
         this.bluetooth = await OleapBle.getBluetoothState()
         this.addEvent(`蓝牙状态：${this.bluetoothLabel}`)
       })
     },
     async scan() {
-      await this.safeRun(async () => {
+      await this.runAction(async () => {
         this.devices = []
         this.clearScanTimer()
         this.scanning = true
@@ -458,12 +454,12 @@ export default {
         this.addEvent(`当前已连接 ${device.deviceId}`)
         return
       }
-      await this.safeRun(async () => {
+      await this.runAction(async () => {
         await OleapBle.connect({ deviceId: device.deviceId, name: device.name })
       })
     },
     async disconnectDevice() {
-      await this.safeRun(async () => {
+      await this.runAction(async () => {
         await OleapBle.disconnect()
       })
     },
@@ -518,19 +514,10 @@ export default {
       })
       this.events = this.events.slice(0, 8)
     },
-    async safeRun(action) {
-      if (this.busy) {
-        return
-      }
-      try {
-        this.busy = true
-        this.error = ''
-        await action()
-      } catch (error) {
-        this.error = formatSdkError(error) || '操作失败'
-      } finally {
-        this.busy = false
-      }
+    async runAction(action) {
+      return runOleapAction(this, action, {
+        busyKey: 'busy'
+      })
     }
   }
 }
