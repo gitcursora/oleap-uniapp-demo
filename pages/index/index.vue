@@ -466,6 +466,22 @@ export default {
       if (!this.bluetoothReady || this.connected) {
         return
       }
+      // Android: active classic BT device takes priority — same MAC works for BLE GATT
+      // #ifdef APP-PLUS
+      if (plus.os.name === 'Android') {
+        const activeBtDevice = await OleapBle.getActiveBtDevice().catch(() => null)
+        if (activeBtDevice && activeBtDevice.deviceId) {
+          this.activeBtMac = activeBtDevice.deviceId
+          const normalized = this.normalizeDevice({ ...activeBtDevice, source: 'bonded' })
+          if (normalized) {
+            this.devices = [normalized]
+            this.addEvent(`发现已连接的经典蓝牙设备 ${normalized.name}`)
+            await this.autoConnectDevice(normalized, '经典蓝牙设备')
+            return
+          }
+        }
+      }
+      // #endif
       const knownDevices = await OleapBle.listKnownDevices().catch(() => [])
       const usableKnownDevices = this.normalizeDeviceList(knownDevices)
       if (Array.isArray(knownDevices) && knownDevices.length > usableKnownDevices.length) {
@@ -480,21 +496,6 @@ export default {
         }
         return
       }
-      // Android: try to find the currently active classic BT audio device (same MAC as BLE)
-      // #ifdef APP-PLUS
-      if (plus.os.name === 'Android') {
-        const activeBtDevice = await OleapBle.getActiveBtDevice().catch(() => null)
-        if (activeBtDevice && activeBtDevice.deviceId) {
-          const normalized = this.normalizeDevice({ ...activeBtDevice, source: 'bonded' })
-          if (normalized) {
-            this.devices = [normalized]
-            this.addEvent(`发现已连接的经典蓝牙设备 ${normalized.name}`)
-            await this.autoConnectDevice(normalized, '经典蓝牙设备')
-            return
-          }
-        }
-      }
-      // #endif
       const rememberedId = getDemoLastDeviceId('')
       if (rememberedId) {
         const rememberedDevice = {
@@ -519,6 +520,10 @@ export default {
         this.bluetooth = await OleapBle.getBluetoothState()
         const granted = result?.permissionGranted === true || result?.bluetooth === true
         this.addEvent(granted ? '蓝牙权限已授予' : '蓝牙权限未授予')
+        if (granted) {
+          await new Promise(resolve => setTimeout(resolve, 500))
+          await this.bootstrapKnownDevices()
+        }
       })
     },
     async refreshBluetoothState() {
@@ -554,18 +559,24 @@ export default {
         this.scanTimer = setTimeout(async () => {
           this.scanning = false
           this.scanTimer = null
-          this.addEvent(`扫描结束，发现 ${this.devices.length} 台`)
           // #ifdef APP-PLUS
           if (plus.os.name === 'Android') {
             const activeBt = await OleapBle.getActiveBtDevice().catch(() => null)
             this.activeBtMac = activeBt?.deviceId || ''
-            if (activeBt?.deviceId && !this.devices.find(d => this.deviceId(d) === activeBt.deviceId)) {
-              const normalized = this.normalizeDevice({ ...activeBt, source: 'bonded' })
-              if (normalized) {
-                this.devices.push(normalized)
-                this.addEvent(`发现已连接的经典蓝牙设备 ${normalized.name}`)
-              }
+            if (activeBt?.deviceId) {
+              // only show the active classic BT device, filter out everything else
+              const matched = this.devices.find(d => this.deviceId(d).toLowerCase() === activeBt.deviceId.toLowerCase())
+              this.devices = matched
+                ? [matched]
+                : [this.normalizeDevice({ ...activeBt, source: 'bonded' })].filter(Boolean)
+              this.addEvent(`扫描结束，经典蓝牙设备 ${activeBt.deviceId}`)
+            } else {
+              this.addEvent(`扫描结束，发现 ${this.devices.length} 台`)
             }
+          } else {
+          // #endif
+            this.addEvent(`扫描结束，发现 ${this.devices.length} 台`)
+          // #ifdef APP-PLUS
           }
           // #endif
           const preferred = this.preferredDevice(this.devices)

@@ -13,8 +13,6 @@ import BroadcastReceiver from 'android.content.BroadcastReceiver'
 import Context from 'android.content.Context'
 import Intent from 'android.content.Intent'
 import IntentFilter from 'android.content.IntentFilter'
-import AudioManager from 'android.media.AudioManager'
-import AudioDeviceInfo from 'android.media.AudioDeviceInfo'
 import Build from 'android.os.Build'
 import File from 'java.io.File'
 import FileInputStream from 'java.io.FileInputStream'
@@ -4953,42 +4951,21 @@ export function getActiveBtDevice(): Promise<any | null> {
   if (adapter == null) {
     return Promise.resolve(null)
   }
-  const context = getContext()
-  if (context == null) {
-    return Promise.resolve(null)
-  }
   try {
     const bonded = adapter.getBondedDevices()
     if (bonded == null) {
       return Promise.resolve(null)
     }
-    const audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    const audioOutputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
     for (let device in bonded) {
       const address = deviceAddressOf(device)
       if (!address.toUpperCase().startsWith("01:EA")) {
         continue
       }
-      // check classic BT connection state via reflection
       let isConnected = false
       try {
         isConnected = UTSAndroid.getJavaClass(BluetoothDevice).getMethod("isConnected").invoke(device) as boolean
       } catch (_e) {}
       if (!isConnected) {
-        continue
-      }
-      // check if this device is the active A2DP audio output
-      let isActive = false
-      for (let audioDevice in audioOutputs) {
-        if (
-          audioDevice.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP &&
-          audioDevice.getAddress() == address
-        ) {
-          isActive = true
-          break
-        }
-      }
-      if (!isActive) {
         continue
       }
       const name = deviceNameOf(device)

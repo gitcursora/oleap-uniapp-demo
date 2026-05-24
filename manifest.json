@@ -2,8 +2,8 @@
     "name" : "oleap-uniapp-demo",
     "appid" : "__UNI__061B305",
     "description" : "Oleap BLE SDK teaching demo",
-    "versionName" : "0.1.0",
-    "versionCode" : 117,
+    "versionName" : "0.1.18",
+    "versionCode" : 118,
     "vueVersion" : "3",
     "transformPx" : false,
     "app-plus" : {
