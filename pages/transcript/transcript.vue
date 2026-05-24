@@ -19,15 +19,17 @@
 </template>
 
 <script>
+const DEFAULT_AUDIO_FILE_PATH = '/static/audio/android-1779603873965-1.wav'
+
 export default {
   data() {
     return {
-      filePath: '',
+      filePath: DEFAULT_AUDIO_FILE_PATH,
       text: ''
     }
   },
   onLoad(query) {
-    this.filePath = query.filePath ? decodeURIComponent(query.filePath) : ''
+    this.filePath = query.filePath ? decodeURIComponent(query.filePath) : DEFAULT_AUDIO_FILE_PATH
   },
   methods: {
     async transcribe() {
