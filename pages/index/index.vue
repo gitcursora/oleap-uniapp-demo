@@ -551,10 +551,23 @@ export default {
           }
           throw error
         }
-        this.scanTimer = setTimeout(() => {
+        this.scanTimer = setTimeout(async () => {
           this.scanning = false
           this.scanTimer = null
           this.addEvent(`扫描结束，发现 ${this.devices.length} 台`)
+          // #ifdef APP-PLUS
+          if (plus.os.name === 'Android') {
+            const activeBt = await OleapBle.getActiveBtDevice().catch(() => null)
+            this.activeBtMac = activeBt?.deviceId || ''
+            if (activeBt?.deviceId && !this.devices.find(d => this.deviceId(d) === activeBt.deviceId)) {
+              const normalized = this.normalizeDevice({ ...activeBt, source: 'bonded' })
+              if (normalized) {
+                this.devices.push(normalized)
+                this.addEvent(`发现已连接的经典蓝牙设备 ${normalized.name}`)
+              }
+            }
+          }
+          // #endif
           const preferred = this.preferredDevice(this.devices)
           if (!this.connected && preferred) {
             this.autoConnectDevice(preferred, preferred.deviceId === getDemoLastDeviceId('') ? '上次设备' : '扫描结果')
