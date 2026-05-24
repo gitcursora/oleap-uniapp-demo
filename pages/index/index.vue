@@ -15,6 +15,7 @@
       <view class="summary-cell">
         <text class="summary-label">蓝牙</text>
         <text class="summary-value">{{ bluetoothLabel }}</text>
+        <text v-if="activeBtMac" class="summary-mac">{{ activeBtMac }}</text>
       </view>
       <view class="summary-cell">
         <text class="summary-label">设备</text>
@@ -142,6 +143,7 @@ export default {
         enabled: false,
         permissionGranted: false
       },
+      activeBtMac: '',
       devices: [],
       connected: false,
       connectedDevice: null,
@@ -312,6 +314,14 @@ export default {
         this.installSubscriptions()
         await this.bootstrapKnownDevices()
         this.addEvent('Native 模式已就绪')
+        // #ifdef APP-PLUS
+        if (plus.os.name === 'Android') {
+          const activeBt = await OleapBle.getActiveBtDevice().catch(() => null)
+          if (activeBt && activeBt.deviceId) {
+            this.activeBtMac = activeBt.deviceId
+          }
+        }
+        // #endif
       })
     },
     installSubscriptions() {
@@ -470,6 +480,21 @@ export default {
         }
         return
       }
+      // Android: try to find the currently active classic BT audio device (same MAC as BLE)
+      // #ifdef APP-PLUS
+      if (plus.os.name === 'Android') {
+        const activeBtDevice = await OleapBle.getActiveBtDevice().catch(() => null)
+        if (activeBtDevice && activeBtDevice.deviceId) {
+          const normalized = this.normalizeDevice({ ...activeBtDevice, source: 'bonded' })
+          if (normalized) {
+            this.devices = [normalized]
+            this.addEvent(`发现已连接的经典蓝牙设备 ${normalized.name}`)
+            await this.autoConnectDevice(normalized, '经典蓝牙设备')
+            return
+          }
+        }
+      }
+      // #endif
       const rememberedId = getDemoLastDeviceId('')
       if (rememberedId) {
         const rememberedDevice = {
@@ -712,6 +737,14 @@ export default {
   color: #0f172a;
   font-size: 30rpx;
   font-weight: 700;
+  word-break: break-all;
+}
+
+.summary-mac {
+  display: block;
+  margin-top: 6rpx;
+  color: #64748b;
+  font-size: 20rpx;
   word-break: break-all;
 }
 

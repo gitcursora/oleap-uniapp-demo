@@ -386,6 +386,10 @@ export const OleapBle = {
   clearDiagnostics() {
     state.diagnostics = []
     return nativeCallSync('clearDiagnostics', [], undefined)
+  },
+
+  async getActiveBtDevice() {
+    return nativeCall('getActiveBtDevice')
   }
 }
 
@@ -421,5 +425,6 @@ export const onDecodeProgress = OleapBle.onDecodeProgress.bind(OleapBle)
 export const onError = OleapBle.onError.bind(OleapBle)
 export const getDiagnostics = OleapBle.getDiagnostics.bind(OleapBle)
 export const clearDiagnostics = OleapBle.clearDiagnostics.bind(OleapBle)
+export const getActiveBtDevice = OleapBle.getActiveBtDevice.bind(OleapBle)
 
 export default OleapBle

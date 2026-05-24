@@ -13,6 +13,8 @@ import BroadcastReceiver from 'android.content.BroadcastReceiver'
 import Context from 'android.content.Context'
 import Intent from 'android.content.Intent'
 import IntentFilter from 'android.content.IntentFilter'
+import AudioManager from 'android.media.AudioManager'
+import AudioDeviceInfo from 'android.media.AudioDeviceInfo'
 import Build from 'android.os.Build'
 import File from 'java.io.File'
 import FileInputStream from 'java.io.FileInputStream'
@@ -4434,7 +4436,7 @@ export function connect(options: any): Promise<any> {
       const remoteDevice = adapter.getRemoteDevice(deviceId)
       const callback = new OleapGattCallback(generationAtStart)
       gattCallback = callback
-      connectedGatt = remoteDevice.connectGatt(context, false, callback)
+      connectedGatt = remoteDevice.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
       pushDiagnostic('connect_start', {
         deviceId,
         timeoutMs,
@@ -4941,4 +4943,60 @@ export function getDiagnostics(): any {
 
 export function clearDiagnostics(): void {
   diagnostics.splice(0, diagnostics.length)
+}
+
+// Returns the first bonded classic BT device that is currently connected and active as an audio
+// output, and whose MAC starts with "01:EA" (the oleap OUI prefix). Used for auto-connect on
+// Android where the classic BT MAC equals the BLE GATT address.
+export function getActiveBtDevice(): Promise<any | null> {
+  const adapter = getBluetoothAdapter()
+  if (adapter == null) {
+    return Promise.resolve(null)
+  }
+  const context = getContext()
+  if (context == null) {
+    return Promise.resolve(null)
+  }
+  try {
+    const bonded = adapter.getBondedDevices()
+    if (bonded == null) {
+      return Promise.resolve(null)
+    }
+    const audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    const audioOutputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+    for (let device in bonded) {
+      const address = deviceAddressOf(device)
+      if (!address.toUpperCase().startsWith("01:EA")) {
+        continue
+      }
+      // check classic BT connection state via reflection
+      let isConnected = false
+      try {
+        isConnected = UTSAndroid.getJavaClass(BluetoothDevice).getMethod("isConnected").invoke(device) as boolean
+      } catch (_e) {}
+      if (!isConnected) {
+        continue
+      }
+      // check if this device is the active A2DP audio output
+      let isActive = false
+      for (let audioDevice in audioOutputs) {
+        if (
+          audioDevice.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP &&
+          audioDevice.getAddress() == address
+        ) {
+          isActive = true
+          break
+        }
+      }
+      if (!isActive) {
+        continue
+      }
+      const name = deviceNameOf(device)
+      pushDiagnostic('active_bt_device_found', { deviceId: address, name })
+      return Promise.resolve({ deviceId: address, name: name.length > 0 ? name : 'Oleap 设备' })
+    }
+  } catch (error) {
+    pushDiagnostic('active_bt_device_error', { error: `${error}` })
+  }
+  return Promise.resolve(null)
 }
