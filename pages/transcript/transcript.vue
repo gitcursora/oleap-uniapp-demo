@@ -7,8 +7,11 @@
         <text class="value">{{ filePath || '未选择' }}</text>
       </view>
       <view class="button-row">
-        <button class="primary-button" @click="transcribe">上传</button>
+        <button class="primary-button" :disabled="uploading" @click="transcribe">
+          {{ uploading ? '上传中…' : '上传' }}
+        </button>
       </view>
+      <view v-if="errorMsg" class="error-text">{{ errorMsg }}</view>
     </view>
 
     <view class="panel">
@@ -19,13 +22,17 @@
 </template>
 
 <script>
+import { uploadAudio } from '@/utils/api.js'
+
 const DEFAULT_AUDIO_FILE_PATH = '/static/audio/android-1779603873965-1.wav'
 
 export default {
   data() {
     return {
       filePath: DEFAULT_AUDIO_FILE_PATH,
-      text: ''
+      uploading: false,
+      text: '',
+      errorMsg: ''
     }
   },
   onLoad(query) {
@@ -33,8 +40,18 @@ export default {
   },
   methods: {
     async transcribe() {
-      await new Promise((resolve) => setTimeout(resolve, 300))
-      this.text = '会议讨论了项目分工、接口接入、录音文件验收和课堂演示安排。'
+      if (this.uploading) return
+      this.uploading = true
+      this.errorMsg = ''
+      this.text = ''
+      try {
+        const data = await uploadAudio(this.filePath)
+        this.text = data.result?.transcript?.text || JSON.stringify(data.result)
+      } catch (err) {
+        this.errorMsg = err.message || '上传失败'
+      } finally {
+        this.uploading = false
+      }
     }
   }
 }
