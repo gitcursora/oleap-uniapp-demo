@@ -110,7 +110,7 @@ const RECORDING_DECODE_FAILURE_THRESHOLD = 0.10
 const RECORDING_SAMPLE_RATE = 16000
 const RECORDING_PCM_BITS_PER_SAMPLE = 16
 const RECORDING_PROGRESS_THROTTLE_MS = 200
-const REALTIME_DECODE_BATCH_FRAMES = 12
+const REALTIME_DECODE_BATCH_FRAMES_DEFAULT = 25
 
 class OleapDeviceInfo {
   deviceId: string
@@ -419,6 +419,7 @@ class RecordingSession {
   realtimeDecodedFrames: Int = 0
   realtimeFailedFrames: Int = 0
   realtimePendingFrames: Array<ByteArray> = new Array<ByteArray>()
+  realtimeBatchFrames: number = REALTIME_DECODE_BATCH_FRAMES_DEFAULT
 
   constructor(sessionId: string, scene: string, generation: number, recordChannel: number, packetLength: number) {
     this.sessionId = sessionId
@@ -3634,7 +3635,7 @@ function appendRecordingFramesToSession(session: RecordingSession, response: Rec
       }
 
       // 当累积帧数达到阈值时，批量解码
-      if (session.realtimePendingFrames.length >= REALTIME_DECODE_BATCH_FRAMES) {
+      if (session.realtimePendingFrames.length >= session.realtimeBatchFrames) {
         const framesToDecode = session.realtimePendingFrames.length
         let batchDecodedFrames: Int = 0
         let batchFailedFrames: Int = 0
@@ -3909,6 +3910,7 @@ function handleRecordingStartResponse(response: RecordingResponse): void {
       }
       session.realtimeDecode = true
       session.realtimeFormat = format
+      session.realtimeBatchFrames = optionNumber(request.options, 'realtimeBatchFrames', REALTIME_DECODE_BATCH_FRAMES_DEFAULT)
       initRealtimeDecoder(session)
     }
 
