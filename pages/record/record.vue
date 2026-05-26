@@ -480,6 +480,10 @@ export default {
         try {
           this.result = await OleapBle.stopRecording({ format: this.format })
           this.active = false
+          // 停止波形动画，清空未显示的队列
+          if (this.$refs.waveform) {
+            this.$refs.waveform.stopAnimation()
+          }
           this.decode = {
             phase: 'completed',
             progress: 100

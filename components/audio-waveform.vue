@@ -91,7 +91,7 @@ export default {
 
     startAnimation() {
       if (this.animTimer != null) return
-      // 每 40ms 追加一个柱子，视觉上平滑滚入
+      // 每 20ms 追加一个柱子，视觉上平滑滚入
       this.animTimer = setInterval(() => {
         if (this.pendingQueue.length === 0) {
           this.stopAnimation()
