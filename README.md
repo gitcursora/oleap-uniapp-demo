@@ -1559,26 +1559,35 @@ async function loadDeviceStatus() {
 /**
  * 开始实时录音。
  * scene 用来告诉耳机当前录音场景。
+ * realtimeDecode 开启后边录边解码，录音结束无需等待解码。
  */
 const started = await OleapBle.startRecording({
-  scene: 'personal'
+  scene: 'personal',
+  realtimeDecode: false,      // 可选，是否启用实时解码，默认 false（批量解码）
+  format: 'wav',              // 实时解码时必须是 wav
+  realtimeBatchFrames: 25     // 可选，实时解码每批帧数，默认 25（约 1 秒）
 })
 
 console.log('录音会话', started.sessionId)
+console.log('解码模式', started.decodeMode)  // 'realtime' 或 'batch'
 ```
 
 参数：
 
 - `scene`：录音场景，可选 `personal`、`call`、`media`、`ambient`。
+- `realtimeDecode`：可选，是否启用实时解码模式，默认 `false`。启用后录音过程中边解码边写入 WAV 文件，停止录音后无需等待解码。
+- `format`：可选，输出格式，可选 `wav`、`mp3`，默认 `wav`。实时解码模式下只支持 `wav`。
+- `realtimeBatchFrames`：可选，实时解码每批积累的帧数，默认 `25`（约 1 秒触发一次解码）。值越小响应越快，建议范围 `10`–`50`。
 
 返回：
 
-- `Promise<any>`，通常包含 `sessionId` 等会话信息。
+- `Promise<any>`，包含 `sessionId`、`decodeMode`（`'realtime'` 或 `'batch'`）等会话信息。
 
 注意：
 
 - 必须先连接耳机。
 - 同一时间只能有一个实时录音会话。
+- 实时解码仅支持 Android，iOS 不支持。
 - 如果页面离开时仍在录音，建议提示用户先停止录音。
 
 #### stopRecording(options)
