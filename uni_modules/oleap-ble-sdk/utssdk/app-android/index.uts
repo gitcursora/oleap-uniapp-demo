@@ -110,6 +110,7 @@ const RECORDING_DECODE_FAILURE_THRESHOLD = 0.10
 const RECORDING_SAMPLE_RATE = 16000
 const RECORDING_PCM_BITS_PER_SAMPLE = 16
 const RECORDING_PROGRESS_THROTTLE_MS = 200
+const REALTIME_DECODE_BATCH_FRAMES = 25
 
 class OleapDeviceInfo {
   deviceId: string
@@ -408,6 +409,17 @@ class RecordingSession {
   downloadedBytes: number = 0
   progress: number = 0
 
+  // 实时解码相关字段
+  realtimeDecode: boolean = false
+  realtimeFormat: string = 'wav'
+  realtimeDecoder: OpusDecoder | null = null
+  realtimeOutputPath: string = ''
+  realtimeOutputStream: FileOutputStream | null = null
+  realtimePcmBytes: Int = 0
+  realtimeDecodedFrames: Int = 0
+  realtimeFailedFrames: Int = 0
+  realtimePendingFrames: Array<ByteArray> = new Array<ByteArray>()
+
   constructor(sessionId: string, scene: string, generation: number, recordChannel: number, packetLength: number) {
     this.sessionId = sessionId
     this.scene = scene
@@ -421,6 +433,7 @@ class RecordingCommandRequest {
   kind: string
   scene: string = ''
   format: string = 'wav'
+  options: any | null = null
   command: Array<number>
   generation: number
   completed: boolean = false
@@ -618,6 +631,7 @@ const connectionCallbacks = new Set<NativeConnectionCallback>()
 const dpCallbacks = new Set<NativeDpCallback>()
 const recordingProgressCallbacks = new Set<NativeProgressCallback>()
 const decodeProgressCallbacks = new Set<NativeProgressCallback>()
+const waveformDataCallbacks = new Set<NativeProgressCallback>()
 const errorCallbacks = new Set<NativeErrorCallback>()
 const diagnostics = new Array<any>()
 const discoveredDeviceIds = new Set<string>()
@@ -2775,6 +2789,19 @@ function closeRecordingSessionStreams(session: RecordingSession | null): void {
   }
   session.opusRawStream = null
   session.framesStream = null
+
+  // 关闭实时解码流
+  if (session.realtimeDecode) {
+    try {
+      closeOutputStream(session.realtimeOutputStream)
+    } catch (error) {
+      emitError(makeError('realtime_output_close_failed', '关闭实时解码输出文件失败', 'recording', true, {
+        sessionId: session.sessionId,
+        error: `${error}`
+      }))
+    }
+    session.realtimeOutputStream = null
+  }
 }
 
 function createRecordingSession(scene: string, startResponse: RecordingResponse): RecordingSession {
@@ -2805,6 +2832,179 @@ function createFlashRecordingSession(fileInfo: FlashFileInfo): RecordingSession 
   session.channels = fileInfo.channels
   session.bitrate = fileInfo.bitRate
   return session
+}
+
+function initRealtimeDecoder(session: RecordingSession): void {
+  const decoder = new OpusDecoder()
+  if (!decoder.init()) {
+    throw makeError('realtime_decoder_init_failed', '实时解码器初始化失败', 'recording', true, {
+      sessionId: session.sessionId
+    })
+  }
+
+  const outputPath = recordingDecodedOutputPath(session, session.realtimeFormat)
+  deleteFileSilently(outputPath)
+
+  const output = new FileOutputStream(new File(outputPath), false)
+
+  // 写入 WAV 占位头（44字节）
+  output.write(numbersToByteArray(
+    wavHeaderBytes(0, RECORDING_SAMPLE_RATE, 1, RECORDING_PCM_BITS_PER_SAMPLE)
+  ))
+
+  session.realtimeDecoder = decoder
+  session.realtimeOutputPath = outputPath
+  session.realtimeOutputStream = output
+  session.realtimePcmBytes = 0
+  session.realtimeDecodedFrames = 0
+  session.realtimeFailedFrames = 0
+
+  pushDiagnostic('realtime_decoder_initialized', {
+    sessionId: session.sessionId,
+    outputPath,
+    format: session.realtimeFormat
+  })
+}
+
+function finalizeRealtimeDecoding(session: RecordingSession): RecordingResult {
+  try {
+    // 处理剩余的待解码帧
+    const decoder = session.realtimeDecoder
+    const outputStream = session.realtimeOutputStream
+    if (decoder != null && outputStream != null && session.realtimePendingFrames.length > 0) {
+      const remainingFrames = session.realtimePendingFrames.length
+      let remainingDecodedFrames: Int = 0
+      let remainingFailedFrames: Int = 0
+
+      pushDiagnostic('realtime_decode_processing_remaining', {
+        sessionId: session.sessionId,
+        remainingFrames
+      })
+
+      for (let index = 0; index < remainingFrames; index++) {
+        const rawFrame = session.realtimePendingFrames[index]
+        try {
+          const payload = opusPayloadFromFrame(rawFrame)
+          const pcm = decoder.decode(payload, RECORDING_DECODER_FRAME_SAMPLES.toInt())
+
+          if (pcm != null) {
+            outputStream.write(pcm)
+            session.realtimePcmBytes += pcm.size
+            remainingDecodedFrames += 1
+          } else {
+            remainingFailedFrames += 1
+          }
+        } catch (error) {
+          remainingFailedFrames += 1
+        }
+      }
+
+      session.realtimeDecodedFrames += remainingDecodedFrames
+      session.realtimeFailedFrames += remainingFailedFrames
+      session.realtimePendingFrames.splice(0, remainingFrames)
+
+      pushDiagnostic('realtime_decode_remaining_completed', {
+        sessionId: session.sessionId,
+        decodedFrames: remainingDecodedFrames,
+        failedFrames: remainingFailedFrames
+      })
+    }
+
+    // 关闭输出流
+    if (session.realtimeOutputStream != null) {
+      session.realtimeOutputStream.close()
+      session.realtimeOutputStream = null
+    }
+
+    // 释放 decoder
+    if (decoder != null) {
+      try { decoder.release() } catch (_) {}
+      session.realtimeDecoder = null
+    }
+
+    // 检查解码结果
+    if (session.realtimeDecodedFrames <= 0 || session.realtimePcmBytes <= 0) {
+      deleteFileSilently(session.realtimeOutputPath)
+      throw makeError('realtime_decode_empty', '实时解码没有生成有效 PCM 数据', 'recording', true, {
+        sessionId: session.sessionId,
+        decodedFrames: session.realtimeDecodedFrames,
+        pcmBytes: session.realtimePcmBytes
+      })
+    }
+
+    // 检查失败率
+    const totalAttempts = session.realtimeDecodedFrames + session.realtimeFailedFrames
+    if (totalAttempts > 0 && session.realtimeFailedFrames / totalAttempts > RECORDING_DECODE_FAILURE_THRESHOLD) {
+      deleteFileSilently(session.realtimeOutputPath)
+      throw makeError('realtime_decode_corruption_threshold', '实时解码失败帧比例过高', 'recording', true, {
+        sessionId: session.sessionId,
+        decodedFrames: session.realtimeDecodedFrames,
+        failedFrames: session.realtimeFailedFrames,
+        failureThreshold: RECORDING_DECODE_FAILURE_THRESHOLD
+      })
+    }
+
+    // 回写 WAV 头
+    rewriteWavHeader(
+      session.realtimeOutputPath,
+      session.realtimePcmBytes,
+      RECORDING_SAMPLE_RATE,
+      1,
+      RECORDING_PCM_BITS_PER_SAMPLE
+    )
+
+    emitDecodeProgress({
+      sessionId: session.sessionId,
+      phase: 'finalizing',
+      progress: 100
+    })
+
+    const outputFile = new File(session.realtimeOutputPath)
+    const outputSize = outputFile.length()
+
+    pushDiagnostic('realtime_decode_completed', {
+      sessionId: session.sessionId,
+      decodedFrames: session.realtimeDecodedFrames,
+      failedFrames: session.realtimeFailedFrames,
+      pcmBytes: session.realtimePcmBytes,
+      outputSize
+    })
+
+    // 返回结果
+    const result = new RecordingResult(session.realtimeOutputPath, session.realtimeFormat)
+    result.durationMs = session.durationMs
+    result.sampleRate = RECORDING_SAMPLE_RATE
+    result.channels = 1
+    result.frameCount = session.frameCount
+    result.frameLen = session.frameLen
+    result.decodedFrames = session.realtimeDecodedFrames
+    result.failedFrames = session.realtimeFailedFrames
+    result.pcmBytes = session.realtimePcmBytes
+    result.lostFrames = session.lostFrames
+    result.outOfOrderFrames = session.outOfOrderFrames
+    result.badFrames = session.badFrames
+    result.size = outputSize
+    return result
+  } catch (error) {
+    // 清理资源
+    if (session.realtimeOutputStream != null) {
+      try { session.realtimeOutputStream.close() } catch (_) {}
+      session.realtimeOutputStream = null
+    }
+    const cleanupDecoder = session.realtimeDecoder
+    if (cleanupDecoder != null) {
+      try { cleanupDecoder.release() } catch (_) {}
+      session.realtimeDecoder = null
+    }
+    const maybeError = asNativeError(error)
+    if (maybeError != null) {
+      throw maybeError
+    }
+    throw makeError('realtime_decode_finalize_failed', '实时解码完成失败', 'recording', true, {
+      sessionId: session.sessionId,
+      error: `${error}`
+    })
+  }
 }
 
 function recordingSessionSummary(session: RecordingSession): UTSJSONObject {
@@ -2868,6 +3068,12 @@ function emitRecordingProgress(session: RecordingSession, force: boolean = false
 
 function emitDecodeProgress(event: any): void {
   decodeProgressCallbacks.forEach((callback) => {
+    callback(event)
+  })
+}
+
+function emitWaveformData(event: any): void {
+  waveformDataCallbacks.forEach((callback) => {
     callback(event)
   })
 }
@@ -3414,6 +3620,96 @@ function appendRecordingFramesToSession(session: RecordingSession, response: Rec
       markRecordingFileWriteError(session, error)
     }
   }
+
+  // 实时解码逻辑 - 批量累积帧后再解码
+  if (session.realtimeDecode) {
+    const decoder = session.realtimeDecoder
+    const outputStream = session.realtimeOutputStream
+
+    if (decoder != null && outputStream != null) {
+      // 将新帧添加到待处理队列
+      for (let index = 0; index < frames.length; index++) {
+        const frame = frames[index]
+        session.realtimePendingFrames.push(numbersToByteArray(frame.rawFrame))
+      }
+
+      // 当累积帧数达到阈值时，批量解码
+      if (session.realtimePendingFrames.length >= REALTIME_DECODE_BATCH_FRAMES) {
+        const framesToDecode = session.realtimePendingFrames.length
+        let batchDecodedFrames: Int = 0
+        let batchFailedFrames: Int = 0
+        const waveformSamples = new Array<number>()
+
+        for (let index = 0; index < framesToDecode; index++) {
+          const rawFrame = session.realtimePendingFrames[index]
+          try {
+            const payload = opusPayloadFromFrame(rawFrame)
+            const pcm = decoder.decode(payload, RECORDING_DECODER_FRAME_SAMPLES.toInt())
+
+            if (pcm != null) {
+              outputStream.write(pcm)
+              session.realtimePcmBytes += pcm.size
+              batchDecodedFrames += 1
+
+              // 提取波形数据（每隔 N 个样本取一个，用于波形显示）
+              // 每帧 640 样本，sampleStep=64 → 每帧 10 个点，25帧 = 250 个点
+              const sampleStep = 64
+              for (let i: Int = 0; i < pcm.size; i += 2) {
+                if (i % (sampleStep * 2) == 0) {
+                  const sample = (pcm[i] & 0xff) | ((pcm[i + 1] & 0xff) << 8)
+                  const signedSample = sample > 32767 ? sample - 65536 : sample
+                  waveformSamples.push(signedSample)
+                }
+              }
+            } else {
+              batchFailedFrames += 1
+            }
+          } catch (error) {
+            batchFailedFrames += 1
+            pushDiagnostic('realtime_decode_frame_error', {
+              sessionId: session.sessionId,
+              frameIndex: session.realtimeDecodedFrames + batchDecodedFrames,
+              error: `${error}`
+            })
+          }
+        }
+
+        session.realtimeDecodedFrames += batchDecodedFrames
+        session.realtimeFailedFrames += batchFailedFrames
+
+        // 清空已处理的帧
+        session.realtimePendingFrames.splice(0, framesToDecode)
+
+        // 上报解码进度
+        emitDecodeProgress({
+          sessionId: session.sessionId,
+          phase: 'decoding',
+          progress: Math.floor(session.realtimeDecodedFrames * 100 / Math.max(session.frameCount, 1))
+        })
+
+        // 发送波形数据
+        if (waveformSamples.length > 0) {
+          emitWaveformData({
+            sessionId: session.sessionId,
+            samples: waveformSamples,
+            sampleCount: waveformSamples.length
+          })
+        }
+
+        pushDiagnostic('realtime_decode_batch_processed', {
+          sessionId: session.sessionId,
+          batchSize: framesToDecode,
+          decodedFrames: batchDecodedFrames,
+          failedFrames: batchFailedFrames,
+          totalDecoded: session.realtimeDecodedFrames,
+          totalFailed: session.realtimeFailedFrames,
+          pendingFrames: session.realtimePendingFrames.length,
+          waveformSamples: waveformSamples.length
+        })
+      }
+    }
+  }
+
   pushDiagnostic(diagnosticEvent, {
     sessionId: session.sessionId,
     source: session.source,
@@ -3600,6 +3896,22 @@ function handleRecordingStartResponse(response: RecordingResponse): void {
   }
   try {
     const session = createRecordingSession(request.scene, response)
+
+    // 检查是否启用实时解码
+    const realtimeDecode = optionBoolean(request.options, 'realtimeDecode', false)
+    const format = requestedRecordingFormatOf(request.options)
+
+    if (realtimeDecode) {
+      if (format != 'wav') {
+        throw makeError('realtime_decode_format_unsupported', '实时解码目前仅支持 WAV 格式', 'recording', true, {
+          requestedFormat: format
+        })
+      }
+      session.realtimeDecode = true
+      session.realtimeFormat = format
+      initRealtimeDecoder(session)
+    }
+
     recordingSession = session
     pushDiagnostic('recording_session_started', recordingSessionSummary(session))
     emitRecordingProgress(session, true)
@@ -3610,7 +3922,9 @@ function handleRecordingStartResponse(response: RecordingResponse): void {
       recordChannel: response.recordChannel,
       packetLength: response.packetLength,
       sampleRate: session.sampleRate,
-      channels: session.channels
+      channels: session.channels,
+      realtimeDecode: session.realtimeDecode,
+      decodeMode: session.realtimeDecode ? 'realtime' : 'batch'
     })
   } catch (error) {
     writeRecordBytes(buildRecordingCommand(RECORDING_COMMAND_STOP, [1]), false)
@@ -3665,13 +3979,28 @@ function handleRecordingStopResponse(response: RecordingResponse): void {
   }
 
   try {
-    const result = decodeRecordingSession(session, request.format)
-    pushDiagnostic('recording_decode_completed', {
-      sessionId: session.sessionId,
-      format: request.format,
-      filePath: result.filePath,
-      size: result.size
-    })
+    let result: RecordingResult
+    if (session.realtimeDecode) {
+      // 使用实时解码结果
+      result = finalizeRealtimeDecoding(session)
+      pushDiagnostic('realtime_decode_completed', {
+        sessionId: session.sessionId,
+        format: session.realtimeFormat,
+        filePath: result.filePath,
+        size: result.size,
+        decodedFrames: session.realtimeDecodedFrames,
+        failedFrames: session.realtimeFailedFrames
+      })
+    } else {
+      // 使用批量解码
+      result = decodeRecordingSession(session, request.format)
+      pushDiagnostic('recording_decode_completed', {
+        sessionId: session.sessionId,
+        format: request.format,
+        filePath: result.filePath,
+        size: result.size
+      })
+    }
     completeRecordingCommand(request, result)
   } catch (error) {
     const maybeError = asNativeError(error)
@@ -4596,12 +4925,14 @@ export function startRecording(options: any | null = null): Promise<any> {
     const command = buildRecordingCommand(scene.command, [0])
     const request = new RecordingCommandRequest('start', command, sessionGeneration, resolve, reject)
     request.scene = scene.scene
+    request.options = options
     pendingRecordingCommand = request
     startRecordingCommandTimeout(request)
     pushDiagnostic('recording_start_enqueued', {
       scene: scene.scene,
       command: scene.command,
-      generation: sessionGeneration
+      generation: sessionGeneration,
+      realtimeDecode: optionBoolean(options, 'realtimeDecode', false)
     })
     writeRecordBytes(command, false)
       .then(() => {
@@ -4874,6 +5205,13 @@ export function onDecodeProgress(callback: NativeProgressCallback): () => void {
   decodeProgressCallbacks.add(callback)
   return () => {
     decodeProgressCallbacks.delete(callback)
+  }
+}
+
+export function onWaveformData(callback: NativeProgressCallback): () => void {
+  waveformDataCallbacks.add(callback)
+  return () => {
+    waveformDataCallbacks.delete(callback)
   }
 }
 

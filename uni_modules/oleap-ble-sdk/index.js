@@ -367,6 +367,10 @@ export const OleapBle = {
     return nativeSubscribe('onDecodeProgress', callback)
   },
 
+  onWaveformData(callback) {
+    return nativeSubscribe('onWaveformData', callback)
+  },
+
   onError(callback) {
     return nativeSubscribe('onError', callback)
   },
@@ -422,6 +426,7 @@ export const onConnectionChanged = OleapBle.onConnectionChanged.bind(OleapBle)
 export const onDpReport = OleapBle.onDpReport.bind(OleapBle)
 export const onRecordingProgress = OleapBle.onRecordingProgress.bind(OleapBle)
 export const onDecodeProgress = OleapBle.onDecodeProgress.bind(OleapBle)
+export const onWaveformData = OleapBle.onWaveformData.bind(OleapBle)
 export const onError = OleapBle.onError.bind(OleapBle)
 export const getDiagnostics = OleapBle.getDiagnostics.bind(OleapBle)
 export const clearDiagnostics = OleapBle.clearDiagnostics.bind(OleapBle)

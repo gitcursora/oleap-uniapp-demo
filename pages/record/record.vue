@@ -45,6 +45,22 @@
         </button>
       </view>
 
+      <view class="section-title control-title">解码方式</view>
+      <view class="button-row option-row">
+        <button
+          v-for="item in decodeModeOptions"
+          :key="item.value"
+          :class="decodeMode === item.value ? 'primary-button' : 'secondary-button'"
+          :disabled="active || busy"
+          @click="decodeMode = item.value"
+        >
+          {{ item.label }}
+        </button>
+      </view>
+      <view v-if="decodeMode === 'realtime' && format !== 'wav'" class="muted hint-text">
+        实时解码仅支持 WAV 格式
+      </view>
+
       <view class="button-row action-row">
         <button class="primary-button" :disabled="!canStart" @click="start">开始</button>
         <button class="danger-button" :disabled="!canStop" @click="stop">结束</button>
@@ -105,6 +121,10 @@
     <view class="panel">
       <view class="section-title">解码</view>
       <view class="row">
+        <text>模式</text>
+        <text class="value" :class="decodeModeClass">{{ decodeModeLabel }}</text>
+      </view>
+      <view class="row">
         <text>阶段</text>
         <text class="value">{{ decode.phase }}</text>
       </view>
@@ -112,6 +132,19 @@
         <text>进度</text>
         <text class="value">{{ decodePercent }}%</text>
       </view>
+    </view>
+
+    <view v-if="active || result" class="panel">
+      <view class="section-title">波形图</view>
+      <audio-waveform
+        ref="waveform"
+        canvas-id="recording-waveform"
+        :width="700"
+        :height="160"
+        :bar-width="3"
+        :bar-gap="1"
+        :bar-color="decodeMode === 'realtime' ? '#34c759' : '#007aff'"
+      ></audio-waveform>
     </view>
 
     <view v-if="result" class="panel">
@@ -143,6 +176,7 @@
 
 <script>
 import { OleapBle } from '@/uni_modules/oleap-ble-sdk/index.js'
+import AudioWaveform from '@/components/audio-waveform.vue'
 import {
   copyOleapDiagnostics,
   disposeOleapDisposers,
@@ -156,6 +190,7 @@ import {
 } from '@/utils/oleap-page-runtime.js'
 
 export default {
+  components: { AudioWaveform },
   data() {
     return {
       connection: {
@@ -164,6 +199,7 @@ export default {
       },
       scene: 'personal',
       format: 'wav',
+      decodeMode: 'batch',
       sceneOptions: [
         { label: '个人', value: 'personal' },
         { label: '通话', value: 'call' },
@@ -173,6 +209,10 @@ export default {
       formatOptions: [
         { label: 'WAV', value: 'wav' },
         { label: 'MP3', value: 'mp3' }
+      ],
+      decodeModeOptions: [
+        { label: '批量解码', value: 'batch' },
+        { label: '实时解码', value: 'realtime' }
       ],
       active: false,
       busy: false,
@@ -237,8 +277,23 @@ export default {
       const percent = raw > 1 ? raw : raw * 100
       return Math.max(0, Math.min(100, Math.round(percent)))
     },
+    decodeModeLabel() {
+      if (!this.active && !this.result) {
+        return this.decodeMode === 'realtime' ? '实时解码' : '批量解码'
+      }
+      // 录音中或已完成，显示实际使用的模式
+      if (this.decode.phase === 'realtime' || this.decode.phase === 'decoding') {
+        return '实时解码'
+      }
+      return '批量解码'
+    },
+    decodeModeClass() {
+      return this.decodeMode === 'realtime' ? 'realtime-mode' : 'batch-mode'
+    },
     canStart() {
-      return this.connection.connected && !this.active && !this.busy
+      if (!this.connection.connected || this.active || this.busy) return false
+      if (this.decodeMode === 'realtime' && this.format !== 'wav') return false
+      return true
     },
     canStop() {
       return this.active && !this.busy
@@ -324,6 +379,11 @@ export default {
             progress: event.progress || 0
           }
         }),
+        OleapBle.onWaveformData((event) => {
+          if (this.$refs.waveform && event.samples) {
+            this.updateWaveform(event.samples)
+          }
+        }),
         OleapBle.onError((error) => {
           this.error = formatOleapError(error)
           this.refreshDiagnostics()
@@ -351,6 +411,30 @@ export default {
         progress: 0
       }
       this.result = null
+      // 重置波形图
+      if (this.$refs.waveform) {
+        this.$refs.waveform.reset()
+      }
+    },
+    updateWaveform(samples) {
+      if (!this.$refs.waveform || !Array.isArray(samples)) return
+
+      // chunkSize=10 → 250샘플/10 = 25바, 40ms×25 = 1000ms = 배치 간격과 일치
+      const chunkSize = 10
+      const waveformData = []
+
+      for (let i = 0; i < samples.length; i += chunkSize) {
+        const chunk = samples.slice(i, Math.min(i + chunkSize, samples.length))
+        let sum = 0
+        for (let j = 0; j < chunk.length; j++) {
+          const normalized = chunk[j] / 32768.0
+          sum += normalized * normalized
+        }
+        const rms = Math.sqrt(sum / chunk.length)
+        waveformData.push(rms)
+      }
+
+      this.$refs.waveform.updateWaveform(waveformData)
     },
     async start() {
       if (!this.connection.connected) {
@@ -361,10 +445,15 @@ export default {
         this.busy = true
         this.resetSessionState()
         try {
-          const started = await OleapBle.startRecording({ scene: this.scene })
+          const realtimeDecode = this.decodeMode === 'realtime'
+          const started = await OleapBle.startRecording({
+            scene: this.scene,
+            realtimeDecode: realtimeDecode,
+            format: this.format
+          })
           this.progress.sessionId = started?.sessionId || ''
           this.decode = {
-            phase: 'recording',
+            phase: realtimeDecode ? 'realtime' : 'recording',
             progress: 0
           }
           this.active = true
@@ -469,5 +558,21 @@ export default {
 
 .error-text {
   margin-top: 12rpx;
+}
+
+.hint-text {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  color: #ff9500;
+}
+
+.realtime-mode {
+  color: #34c759;
+  font-weight: 600;
+}
+
+.batch-mode {
+  color: #007aff;
+  font-weight: 600;
 }
 </style>
