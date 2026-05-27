@@ -7,3 +7,4 @@ dist/
 unpackage/cache/
 unpackage/dist/
 unpackage/uts-error/
+uni_modules/**/.gradle/

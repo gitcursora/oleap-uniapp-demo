@@ -8,7 +8,7 @@
       </view>
       <view class="button-row">
         <button class="primary-button" :disabled="uploading" @click="transcribe">
-          {{ uploading ? '上传中…' : '上传' }}
+          {{ uploading ? uploadStep : '上传' }}
         </button>
       </view>
       <view v-if="errorMsg" class="error-text">{{ errorMsg }}</view>
@@ -22,7 +22,7 @@
 </template>
 
 <script>
-import { uploadAudio } from '@/utils/api.js'
+import { getQiniuToken, uploadToQiniu, transcribeAudio } from '@/utils/api.js'
 
 const DEFAULT_AUDIO_FILE_PATH = '/static/audio/android-1779603873965-1.wav'
 
@@ -31,6 +31,7 @@ export default {
     return {
       filePath: DEFAULT_AUDIO_FILE_PATH,
       uploading: false,
+      uploadStep: '',
       text: '',
       errorMsg: ''
     }
@@ -45,12 +46,22 @@ export default {
       this.errorMsg = ''
       this.text = ''
       try {
-        const data = await uploadAudio(this.filePath)
-        this.text = data.result?.transcript?.text || JSON.stringify(data.result)
+        const format = this.filePath.split('.').pop()?.toLowerCase() || 'wav'
+
+        this.uploadStep = '获取凭证中...'
+        const tokenData = await getQiniuToken(format)
+
+        this.uploadStep = '上传中...'
+        const audioUrl = await uploadToQiniu(this.filePath, tokenData)
+
+        this.uploadStep = '转写中...'
+        const data = await transcribeAudio(audioUrl, format)
+        this.text = data.transcript?.text || JSON.stringify(data)
       } catch (err) {
-        this.errorMsg = err.message || '上传失败'
+        this.errorMsg = err.message || '操作失败'
       } finally {
         this.uploading = false
+        this.uploadStep = ''
       }
     }
   }
