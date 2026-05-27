@@ -147,6 +147,18 @@
       ></audio-waveform>
     </view>
 
+    <view v-if="decodeMode === 'realtime' && (active || pcmLog.length > 0)" class="panel">
+      <view class="section-title">PCM 回调（最近 10 次）</view>
+      <view v-if="pcmLog.length === 0" class="muted">等待数据...</view>
+      <view v-for="item in pcmLog" :key="item.key" class="list-item">
+        <view class="row">
+          <text>{{ item.durationMs }}ms</text>
+          <text class="value">{{ item.byteLength }} 字节</text>
+        </view>
+        <view class="code">{{ item.preview }}</view>
+      </view>
+    </view>
+
     <view v-if="result" class="panel">
       <view class="section-title">文件</view>
       <view class="row">
@@ -234,6 +246,7 @@ export default {
       },
       result: null,
       error: '',
+      pcmLog: [],
       diagnostics: {
         events: []
       },
@@ -384,6 +397,15 @@ export default {
             this.updateWaveform(event.samples)
           }
         }),
+        OleapBle.onRealtimePcmData((event) => {
+          this.pcmLog.unshift({
+            key: Date.now(),
+            byteLength: event.byteLength,
+            durationMs: event.durationMs,
+            preview: event.pcmBase64 ? event.pcmBase64.slice(0, 24) + '...' : ''
+          })
+          if (this.pcmLog.length > 10) this.pcmLog.pop()
+        }),
         OleapBle.onError((error) => {
           this.error = formatOleapError(error)
           this.refreshDiagnostics()
@@ -411,6 +433,7 @@ export default {
         progress: 0
       }
       this.result = null
+      this.pcmLog = []
       // 重置波形图
       if (this.$refs.waveform) {
         this.$refs.waveform.reset()

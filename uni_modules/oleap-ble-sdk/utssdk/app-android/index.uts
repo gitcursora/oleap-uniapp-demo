@@ -5232,6 +5232,7 @@ export function stopFlashDownload(): Promise<void> {
     })
 }
 
+@UTSJS.keepAlive
 export function onDeviceFound(callback: NativeDeviceFoundCallback): () => void {
   deviceFoundCallbacks.add(callback)
   return () => {
@@ -5239,6 +5240,7 @@ export function onDeviceFound(callback: NativeDeviceFoundCallback): () => void {
   }
 }
 
+@UTSJS.keepAlive
 export function onConnectionChanged(callback: NativeConnectionCallback): () => void {
   connectionCallbacks.add(callback)
   return () => {
@@ -5246,6 +5248,7 @@ export function onConnectionChanged(callback: NativeConnectionCallback): () => v
   }
 }
 
+@UTSJS.keepAlive
 export function onDpReport(callback: NativeDpCallback): () => void {
   dpCallbacks.add(callback)
   return () => {
@@ -5253,6 +5256,7 @@ export function onDpReport(callback: NativeDpCallback): () => void {
   }
 }
 
+@UTSJS.keepAlive
 export function onRecordingProgress(callback: NativeProgressCallback): () => void {
   recordingProgressCallbacks.add(callback)
   return () => {
@@ -5260,6 +5264,7 @@ export function onRecordingProgress(callback: NativeProgressCallback): () => voi
   }
 }
 
+@UTSJS.keepAlive
 export function onDecodeProgress(callback: NativeProgressCallback): () => void {
   decodeProgressCallbacks.add(callback)
   return () => {
@@ -5267,6 +5272,7 @@ export function onDecodeProgress(callback: NativeProgressCallback): () => void {
   }
 }
 
+@UTSJS.keepAlive
 export function onWaveformData(callback: NativeProgressCallback): () => void {
   waveformDataCallbacks.add(callback)
   return () => {
@@ -5274,6 +5280,7 @@ export function onWaveformData(callback: NativeProgressCallback): () => void {
   }
 }
 
+@UTSJS.keepAlive
 export function onRealtimePcmData(callback: NativeProgressCallback, perFrame: boolean = false): () => void {
   realtimePcmDataCallbacks.set(callback, perFrame)
   return () => {
@@ -5281,6 +5288,7 @@ export function onRealtimePcmData(callback: NativeProgressCallback, perFrame: bo
   }
 }
 
+@UTSJS.keepAlive
 export function onError(callback: NativeErrorCallback): () => void {
   errorCallbacks.add(callback)
   return () => {
