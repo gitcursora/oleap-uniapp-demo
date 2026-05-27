@@ -1989,6 +1989,85 @@ const dispose = OleapBle.onDecodeProgress((event) => {
 - 实时录音页。
 - Flash 文件页。
 
+#### onWaveformData(callback)
+
+```js
+/**
+ * 监听实时解码的波形样本数据，用于绘制波形图。
+ * 每批解码完成后触发一次（默认约 1 秒）。
+ * 仅在 startRecording 传入 realtimeDecode: true 时有效。
+ */
+const dispose = OleapBle.onWaveformData((event) => {
+  console.log(event.sessionId)
+  console.log(event.samples)     // number[]，已归一化的 PCM 样本值（有符号 16-bit）
+  console.log(event.sampleCount) // 样本数量，默认约 250 个点（25帧 × 10点）
+})
+
+// 页面卸载时取消订阅
+onUnmounted(() => dispose())
+```
+
+回调参数：
+
+- `sessionId`：当前录音会话 ID。
+- `samples`：`number[]`，每批解码后提取的 PCM 样本，可直接用于 Canvas 波形绘制。
+- `sampleCount`：样本数量。
+
+常用页面：
+
+- 实时录音页（波形图展示）。
+
+#### onRealtimePcmData(callback, perFrame?)
+
+```js
+/**
+ * 监听实时解码的 PCM 原始数据，用于 ASR 等需要原始音频的场景。
+ * 仅在 startRecording 传入 realtimeDecode: true 时有效。
+ *
+ * perFrame 默认 false（按批次回调，约 1 秒一次）。
+ * perFrame 传 true 时每帧回调一次（约 40ms 一次）。
+ */
+
+// 按批次（推荐，适合 ASR）
+const dispose = OleapBle.onRealtimePcmData((event) => {
+  console.log(event.pcmBase64)    // base64 编码的 PCM 字节，可直接发给 ASR 接口
+  console.log(event.byteLength)   // 字节数
+  console.log(event.durationMs)   // 这批音频时长（ms），批次模式约 1000ms
+  console.log(event.sampleRate)   // 16000
+  console.log(event.channels)     // 1
+  console.log(event.bitsPerSample) // 16
+})
+
+// 单帧模式（适合需要极低延迟的场景）
+const dispose = OleapBle.onRealtimePcmData((event) => {
+  console.log(event.pcmBase64)    // 单帧 PCM，约 1280 字节
+  console.log(event.durationMs)   // 固定 40ms
+}, true)
+
+// 页面卸载时取消订阅
+onUnmounted(() => dispose())
+```
+
+回调参数：
+
+- `sessionId`：当前录音会话 ID。
+- `pcmBase64`：base64 编码的 PCM 字节（16-bit 小端序，单声道，16000Hz）。
+- `byteLength`：PCM 字节数。批次模式下约 `32000`（25帧 × 1280字节），单帧模式固定 `1280`。
+- `durationMs`：音频时长（ms）。批次模式约 `1000`，单帧模式固定 `40`。
+- `sampleRate`：采样率，固定 `16000`。
+- `channels`：声道数，固定 `1`。
+- `bitsPerSample`：位深，固定 `16`。
+
+注意：
+
+- 仅 Android 支持，iOS 不支持实时解码。
+- 没有注册监听器时不会做 base64 编码，不影响录音性能。
+- 发给 ASR 接口时通常需要告知 `encoding=LINEAR16`、`sampleRate=16000`、`channels=1`。
+
+常用页面：
+
+- 实时录音页（接 ASR 实时转写）。
+
 #### onError(callback)
 
 ```js
@@ -2086,6 +2165,8 @@ OleapBle.clearDiagnostics()
 | `onDpReport(callback)` | 订阅 | 监听设备主动上报 | 设备状态页 |
 | `onRecordingProgress(callback)` | 订阅 | 监听录音或 Flash 进度 | 录音页 / Flash 页 |
 | `onDecodeProgress(callback)` | 订阅 | 监听解码进度 | 录音页 / Flash 页 |
+| `onWaveformData(callback)` | 订阅 | 监听实时解码波形样本，用于波形图绘制 | 实时录音页 |
+| `onRealtimePcmData(callback, perFrame?)` | 订阅 | 监听实时解码 PCM 数据，用于 ASR 等 | 实时录音页 |
 | `onError(callback)` | 订阅 | 监听 SDK 错误事件 | 所有调试页面 |
 | `getDiagnostics()` | 同步 | 获取 SDK 诊断信息 | 调试面板 |
 | `clearDiagnostics()` | 同步 | 清空 SDK 诊断信息 | 调试面板 |

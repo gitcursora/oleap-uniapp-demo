@@ -633,6 +633,7 @@ const dpCallbacks = new Set<NativeDpCallback>()
 const recordingProgressCallbacks = new Set<NativeProgressCallback>()
 const decodeProgressCallbacks = new Set<NativeProgressCallback>()
 const waveformDataCallbacks = new Set<NativeProgressCallback>()
+const realtimePcmDataCallbacks = new Map<NativeProgressCallback, boolean>()
 const errorCallbacks = new Set<NativeErrorCallback>()
 const diagnostics = new Array<any>()
 const discoveredDeviceIds = new Set<string>()
@@ -3079,6 +3080,7 @@ function emitWaveformData(event: any): void {
   })
 }
 
+
 function completeRecordingCommand(request: RecordingCommandRequest | null, value: any): void {
   if (request == null || request.completed == true) {
     return
@@ -3640,6 +3642,7 @@ function appendRecordingFramesToSession(session: RecordingSession, response: Rec
         let batchDecodedFrames: Int = 0
         let batchFailedFrames: Int = 0
         const waveformSamples = new Array<number>()
+        const batchPcmChunks = new Array<ByteArray>()
 
         for (let index = 0; index < framesToDecode; index++) {
           const rawFrame = session.realtimePendingFrames[index]
@@ -3652,8 +3655,12 @@ function appendRecordingFramesToSession(session: RecordingSession, response: Rec
               session.realtimePcmBytes += pcm.size
               batchDecodedFrames += 1
 
+              // 累积 PCM（单帧回调和批次回调都需要）
+              if (realtimePcmDataCallbacks.size > 0) {
+                batchPcmChunks.push(pcm)
+              }
+
               // 提取波形数据（每隔 N 个样本取一个，用于波形显示）
-              // 每帧 640 样本，sampleStep=64 → 每帧 10 个点，25帧 = 250 个点
               const sampleStep = 64
               for (let i: Int = 0; i < pcm.size; i += 2) {
                 if (i % (sampleStep * 2) == 0) {
@@ -3687,6 +3694,56 @@ function appendRecordingFramesToSession(session: RecordingSession, response: Rec
           phase: 'decoding',
           progress: Math.floor(session.realtimeDecodedFrames * 100 / Math.max(session.frameCount, 1))
         })
+
+        // 批次结束后回调 PCM 数据
+        if (batchPcmChunks.length > 0) {
+          let totalBytes: Int = 0
+          for (let c: Int = 0; c < batchPcmChunks.length; c++) {
+            totalBytes += batchPcmChunks[c].size
+          }
+          const merged = new ByteArray(totalBytes)
+          let offset: Int = 0
+          for (let c: Int = 0; c < batchPcmChunks.length; c++) {
+            const chunk = batchPcmChunks[c]
+            for (let b: Int = 0; b < chunk.size; b++) {
+              merged[offset] = chunk[b]
+              offset += 1
+            }
+          }
+          const batchBase64 = android.util.Base64.encodeToString(merged, android.util.Base64.NO_WRAP)
+          const batchEvent = {
+            sessionId: session.sessionId,
+            pcmBase64: batchBase64,
+            byteLength: totalBytes,
+            sampleRate: RECORDING_SAMPLE_RATE,
+            channels: 1,
+            bitsPerSample: RECORDING_PCM_BITS_PER_SAMPLE,
+            durationMs: Math.floor(totalBytes / 2 * 1000 / RECORDING_SAMPLE_RATE)
+          }
+          // 单帧回调：每帧单独 base64 发出
+          const frameEvents = new Array<any>()
+          for (let c: Int = 0; c < batchPcmChunks.length; c++) {
+            const frameBase64 = android.util.Base64.encodeToString(batchPcmChunks[c], android.util.Base64.NO_WRAP)
+            frameEvents.push({
+              sessionId: session.sessionId,
+              pcmBase64: frameBase64,
+              byteLength: batchPcmChunks[c].size,
+              sampleRate: RECORDING_SAMPLE_RATE,
+              channels: 1,
+              bitsPerSample: RECORDING_PCM_BITS_PER_SAMPLE,
+              durationMs: 40
+            })
+          }
+          realtimePcmDataCallbacks.forEach((perFrame: boolean, callback: NativeProgressCallback) => {
+            if (perFrame) {
+              for (let f: Int = 0; f < frameEvents.length; f++) {
+                callback(frameEvents[f])
+              }
+            } else {
+              callback(batchEvent)
+            }
+          })
+        }
 
         // 发送波形数据
         if (waveformSamples.length > 0) {
@@ -5214,6 +5271,13 @@ export function onWaveformData(callback: NativeProgressCallback): () => void {
   waveformDataCallbacks.add(callback)
   return () => {
     waveformDataCallbacks.delete(callback)
+  }
+}
+
+export function onRealtimePcmData(callback: NativeProgressCallback, perFrame: boolean = false): () => void {
+  realtimePcmDataCallbacks.set(callback, perFrame)
+  return () => {
+    realtimePcmDataCallbacks.delete(callback)
   }
 }
 

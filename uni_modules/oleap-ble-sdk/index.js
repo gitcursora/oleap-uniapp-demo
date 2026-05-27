@@ -371,6 +371,22 @@ export const OleapBle = {
     return nativeSubscribe('onWaveformData', callback)
   },
 
+  onRealtimePcmData(callback, perFrame = false) {
+    if (typeof callback !== 'function') {
+      throw makeError('invalid_callback', 'onRealtimePcmData requires a callback', 'sdk', false)
+    }
+    const adapter = nativeAdapter
+    if (!adapter) {
+      throw makeError('native_adapter_not_initialized', '请先 await OleapBle.init() 后再调用 onRealtimePcmData', 'sdk', true, { name: 'onRealtimePcmData' })
+    }
+    const method = adapter?.onRealtimePcmData
+    if (typeof method !== 'function') {
+      throw makeError('native_api_missing', 'native adapter 缺少 onRealtimePcmData 方法', 'sdk', false, { name: 'onRealtimePcmData' })
+    }
+    const unsubscribe = method(callback, perFrame)
+    return typeof unsubscribe === 'function' ? unsubscribe : () => {}
+  },
+
   onError(callback) {
     return nativeSubscribe('onError', callback)
   },
@@ -427,6 +443,7 @@ export const onDpReport = OleapBle.onDpReport.bind(OleapBle)
 export const onRecordingProgress = OleapBle.onRecordingProgress.bind(OleapBle)
 export const onDecodeProgress = OleapBle.onDecodeProgress.bind(OleapBle)
 export const onWaveformData = OleapBle.onWaveformData.bind(OleapBle)
+export const onRealtimePcmData = OleapBle.onRealtimePcmData.bind(OleapBle)
 export const onError = OleapBle.onError.bind(OleapBle)
 export const getDiagnostics = OleapBle.getDiagnostics.bind(OleapBle)
 export const clearDiagnostics = OleapBle.clearDiagnostics.bind(OleapBle)
