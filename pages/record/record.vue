@@ -468,15 +468,15 @@ export default {
         this.busy = true
         this.resetSessionState()
         try {
-          const realtimeDecode = this.decodeMode === 'realtime'
+          const enableRealtimeStream = this.decodeMode === 'realtime'
           const started = await OleapBle.startRecording({
             scene: this.scene,
-            realtimeDecode: realtimeDecode,
+            enableRealtimeStream: enableRealtimeStream,
             format: this.format
           })
           this.progress.sessionId = started?.sessionId || ''
           this.decode = {
-            phase: realtimeDecode ? 'realtime' : 'recording',
+            phase: enableRealtimeStream ? 'realtime' : 'recording',
             progress: 0
           }
           this.active = true

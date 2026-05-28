@@ -1559,11 +1559,11 @@ async function loadDeviceStatus() {
 /**
  * 开始实时录音。
  * scene 用来告诉耳机当前录音场景。
- * realtimeDecode 开启后边录边解码，录音结束无需等待解码。
+ * enableRealtimeStream 开启后边录边解码，录音结束无需等待解码。
  */
 const started = await OleapBle.startRecording({
   scene: 'personal',
-  realtimeDecode: false,      // 可选，是否启用实时解码，默认 false（批量解码）
+  enableRealtimeStream: false,      // 可选，是否启用实时解码，默认 false（批量解码）
   format: 'wav',              // 实时解码时必须是 wav
   realtimeBatchFrames: 25     // 可选，实时解码每批帧数，默认 25（约 1 秒）
 })
@@ -1575,7 +1575,7 @@ console.log('解码模式', started.decodeMode)  // 'realtime' 或 'batch'
 参数：
 
 - `scene`：录音场景，可选 `personal`、`call`、`media`、`ambient`。
-- `realtimeDecode`：可选，是否启用实时解码模式，默认 `false`。启用后录音过程中边解码边写入 WAV 文件，停止录音后无需等待解码。
+- `enableRealtimeStream`：可选，是否启用实时解码模式，默认 `false`。启用后录音过程中边解码边写入 WAV 文件，停止录音后无需等待解码。
 - `format`：可选，输出格式，可选 `wav`、`mp3`，默认 `wav`。实时解码模式下只支持 `wav`。
 - `realtimeBatchFrames`：可选，实时解码每批积累的帧数，默认 `25`（约 1 秒触发一次解码）。值越小响应越快，建议范围 `10`–`50`。
 
@@ -1995,7 +1995,7 @@ const dispose = OleapBle.onDecodeProgress((event) => {
 /**
  * 监听实时解码的波形样本数据，用于绘制波形图。
  * 每批解码完成后触发一次（默认约 1 秒）。
- * 仅在 startRecording 传入 realtimeDecode: true 时有效。
+ * 仅在 startRecording 传入 enableRealtimeStream: true 时有效。
  */
 const dispose = OleapBle.onWaveformData((event) => {
   console.log(event.sessionId)
@@ -2022,7 +2022,7 @@ onUnmounted(() => dispose())
 ```js
 /**
  * 监听实时解码的 PCM 原始数据，用于 ASR 等需要原始音频的场景。
- * 仅在 startRecording 传入 realtimeDecode: true 时有效。
+ * 仅在 startRecording 传入 enableRealtimeStream: true 时有效。
  *
  * perFrame 默认 false（按批次回调，约 1 秒一次）。
  * perFrame 传 true 时每帧回调一次（约 40ms 一次）。

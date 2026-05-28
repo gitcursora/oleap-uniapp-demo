@@ -410,13 +410,13 @@ class RecordingSession {
   progress: number = 0
 
   // 实时解码相关字段
-  realtimeDecode: boolean = false
+  enableRealtimeStream: boolean = false
   realtimeFormat: string = 'wav'
-  realtimeDecoder: OpusDecoder | null = null
+  enableRealtimeStreamr: OpusDecoder | null = null
   realtimeOutputPath: string = ''
   realtimeOutputStream: FileOutputStream | null = null
   realtimePcmBytes: Int = 0
-  realtimeDecodedFrames: Int = 0
+  enableRealtimeStreamdFrames: Int = 0
   realtimeFailedFrames: Int = 0
   realtimePendingFrames: Array<ByteArray> = new Array<ByteArray>()
   realtimeBatchFrames: number = REALTIME_DECODE_BATCH_FRAMES_DEFAULT
@@ -2793,7 +2793,7 @@ function closeRecordingSessionStreams(session: RecordingSession | null): void {
   session.framesStream = null
 
   // 关闭实时解码流
-  if (session.realtimeDecode) {
+  if (session.enableRealtimeStream) {
     try {
       closeOutputStream(session.realtimeOutputStream)
     } catch (error) {
@@ -2854,11 +2854,11 @@ function initRealtimeDecoder(session: RecordingSession): void {
     wavHeaderBytes(0, RECORDING_SAMPLE_RATE, 1, RECORDING_PCM_BITS_PER_SAMPLE)
   ))
 
-  session.realtimeDecoder = decoder
+  session.enableRealtimeStreamr = decoder
   session.realtimeOutputPath = outputPath
   session.realtimeOutputStream = output
   session.realtimePcmBytes = 0
-  session.realtimeDecodedFrames = 0
+  session.enableRealtimeStreamdFrames = 0
   session.realtimeFailedFrames = 0
 
   pushDiagnostic('realtime_decoder_initialized', {
@@ -2871,7 +2871,7 @@ function initRealtimeDecoder(session: RecordingSession): void {
 function finalizeRealtimeDecoding(session: RecordingSession): RecordingResult {
   try {
     // 处理剩余的待解码帧
-    const decoder = session.realtimeDecoder
+    const decoder = session.enableRealtimeStreamr
     const outputStream = session.realtimeOutputStream
     if (decoder != null && outputStream != null && session.realtimePendingFrames.length > 0) {
       const remainingFrames = session.realtimePendingFrames.length
@@ -2901,7 +2901,7 @@ function finalizeRealtimeDecoding(session: RecordingSession): RecordingResult {
         }
       }
 
-      session.realtimeDecodedFrames += remainingDecodedFrames
+      session.enableRealtimeStreamdFrames += remainingDecodedFrames
       session.realtimeFailedFrames += remainingFailedFrames
       session.realtimePendingFrames.splice(0, remainingFrames)
 
@@ -2921,26 +2921,26 @@ function finalizeRealtimeDecoding(session: RecordingSession): RecordingResult {
     // 释放 decoder
     if (decoder != null) {
       try { decoder.release() } catch (_) {}
-      session.realtimeDecoder = null
+      session.enableRealtimeStreamr = null
     }
 
     // 检查解码结果
-    if (session.realtimeDecodedFrames <= 0 || session.realtimePcmBytes <= 0) {
+    if (session.enableRealtimeStreamdFrames <= 0 || session.realtimePcmBytes <= 0) {
       deleteFileSilently(session.realtimeOutputPath)
       throw makeError('realtime_decode_empty', '实时解码没有生成有效 PCM 数据', 'recording', true, {
         sessionId: session.sessionId,
-        decodedFrames: session.realtimeDecodedFrames,
+        decodedFrames: session.enableRealtimeStreamdFrames,
         pcmBytes: session.realtimePcmBytes
       })
     }
 
     // 检查失败率
-    const totalAttempts = session.realtimeDecodedFrames + session.realtimeFailedFrames
+    const totalAttempts = session.enableRealtimeStreamdFrames + session.realtimeFailedFrames
     if (totalAttempts > 0 && session.realtimeFailedFrames / totalAttempts > RECORDING_DECODE_FAILURE_THRESHOLD) {
       deleteFileSilently(session.realtimeOutputPath)
       throw makeError('realtime_decode_corruption_threshold', '实时解码失败帧比例过高', 'recording', true, {
         sessionId: session.sessionId,
-        decodedFrames: session.realtimeDecodedFrames,
+        decodedFrames: session.enableRealtimeStreamdFrames,
         failedFrames: session.realtimeFailedFrames,
         failureThreshold: RECORDING_DECODE_FAILURE_THRESHOLD
       })
@@ -2966,7 +2966,7 @@ function finalizeRealtimeDecoding(session: RecordingSession): RecordingResult {
 
     pushDiagnostic('realtime_decode_completed', {
       sessionId: session.sessionId,
-      decodedFrames: session.realtimeDecodedFrames,
+      decodedFrames: session.enableRealtimeStreamdFrames,
       failedFrames: session.realtimeFailedFrames,
       pcmBytes: session.realtimePcmBytes,
       outputSize
@@ -2979,7 +2979,7 @@ function finalizeRealtimeDecoding(session: RecordingSession): RecordingResult {
     result.channels = 1
     result.frameCount = session.frameCount
     result.frameLen = session.frameLen
-    result.decodedFrames = session.realtimeDecodedFrames
+    result.decodedFrames = session.enableRealtimeStreamdFrames
     result.failedFrames = session.realtimeFailedFrames
     result.pcmBytes = session.realtimePcmBytes
     result.lostFrames = session.lostFrames
@@ -2993,10 +2993,10 @@ function finalizeRealtimeDecoding(session: RecordingSession): RecordingResult {
       try { session.realtimeOutputStream.close() } catch (_) {}
       session.realtimeOutputStream = null
     }
-    const cleanupDecoder = session.realtimeDecoder
+    const cleanupDecoder = session.enableRealtimeStreamr
     if (cleanupDecoder != null) {
       try { cleanupDecoder.release() } catch (_) {}
-      session.realtimeDecoder = null
+      session.enableRealtimeStreamr = null
     }
     const maybeError = asNativeError(error)
     if (maybeError != null) {
@@ -3625,8 +3625,8 @@ function appendRecordingFramesToSession(session: RecordingSession, response: Rec
   }
 
   // 实时解码逻辑 - 批量累积帧后再解码
-  if (session.realtimeDecode) {
-    const decoder = session.realtimeDecoder
+  if (session.enableRealtimeStream) {
+    const decoder = session.enableRealtimeStreamr
     const outputStream = session.realtimeOutputStream
 
     if (decoder != null && outputStream != null) {
@@ -3676,13 +3676,13 @@ function appendRecordingFramesToSession(session: RecordingSession, response: Rec
             batchFailedFrames += 1
             pushDiagnostic('realtime_decode_frame_error', {
               sessionId: session.sessionId,
-              frameIndex: session.realtimeDecodedFrames + batchDecodedFrames,
+              frameIndex: session.enableRealtimeStreamdFrames + batchDecodedFrames,
               error: `${error}`
             })
           }
         }
 
-        session.realtimeDecodedFrames += batchDecodedFrames
+        session.enableRealtimeStreamdFrames += batchDecodedFrames
         session.realtimeFailedFrames += batchFailedFrames
 
         // 清空已处理的帧
@@ -3692,7 +3692,7 @@ function appendRecordingFramesToSession(session: RecordingSession, response: Rec
         emitDecodeProgress({
           sessionId: session.sessionId,
           phase: 'decoding',
-          progress: Math.floor(session.realtimeDecodedFrames * 100 / Math.max(session.frameCount, 1))
+          progress: Math.floor(session.enableRealtimeStreamdFrames * 100 / Math.max(session.frameCount, 1))
         })
 
         // 批次结束后回调 PCM 数据
@@ -3759,7 +3759,7 @@ function appendRecordingFramesToSession(session: RecordingSession, response: Rec
           batchSize: framesToDecode,
           decodedFrames: batchDecodedFrames,
           failedFrames: batchFailedFrames,
-          totalDecoded: session.realtimeDecodedFrames,
+          totalDecoded: session.enableRealtimeStreamdFrames,
           totalFailed: session.realtimeFailedFrames,
           pendingFrames: session.realtimePendingFrames.length,
           waveformSamples: waveformSamples.length
@@ -3956,16 +3956,16 @@ function handleRecordingStartResponse(response: RecordingResponse): void {
     const session = createRecordingSession(request.scene, response)
 
     // 检查是否启用实时解码
-    const realtimeDecode = optionBoolean(request.options, 'realtimeDecode', false)
+    const enableRealtimeStream = optionBoolean(request.options, 'enableRealtimeStream', false)
     const format = requestedRecordingFormatOf(request.options)
 
-    if (realtimeDecode) {
+    if (enableRealtimeStream) {
       if (format != 'wav') {
         throw makeError('realtime_decode_format_unsupported', '实时解码目前仅支持 WAV 格式', 'recording', true, {
           requestedFormat: format
         })
       }
-      session.realtimeDecode = true
+      session.enableRealtimeStream = true
       session.realtimeFormat = format
       session.realtimeBatchFrames = optionNumber(request.options, 'realtimeBatchFrames', REALTIME_DECODE_BATCH_FRAMES_DEFAULT)
       initRealtimeDecoder(session)
@@ -3982,8 +3982,8 @@ function handleRecordingStartResponse(response: RecordingResponse): void {
       packetLength: response.packetLength,
       sampleRate: session.sampleRate,
       channels: session.channels,
-      realtimeDecode: session.realtimeDecode,
-      decodeMode: session.realtimeDecode ? 'realtime' : 'batch'
+      enableRealtimeStream: session.enableRealtimeStream,
+      decodeMode: session.enableRealtimeStream ? 'realtime' : 'batch'
     })
   } catch (error) {
     writeRecordBytes(buildRecordingCommand(RECORDING_COMMAND_STOP, [1]), false)
@@ -4039,7 +4039,7 @@ function handleRecordingStopResponse(response: RecordingResponse): void {
 
   try {
     let result: RecordingResult
-    if (session.realtimeDecode) {
+    if (session.enableRealtimeStream) {
       // 使用实时解码结果
       result = finalizeRealtimeDecoding(session)
       pushDiagnostic('realtime_decode_completed', {
@@ -4047,7 +4047,7 @@ function handleRecordingStopResponse(response: RecordingResponse): void {
         format: session.realtimeFormat,
         filePath: result.filePath,
         size: result.size,
-        decodedFrames: session.realtimeDecodedFrames,
+        decodedFrames: session.enableRealtimeStreamdFrames,
         failedFrames: session.realtimeFailedFrames
       })
     } else {
@@ -4991,7 +4991,7 @@ export function startRecording(options: any | null = null): Promise<any> {
       scene: scene.scene,
       command: scene.command,
       generation: sessionGeneration,
-      realtimeDecode: optionBoolean(options, 'realtimeDecode', false)
+      enableRealtimeStream: optionBoolean(options, 'enableRealtimeStream', false)
     })
     writeRecordBytes(command, false)
       .then(() => {

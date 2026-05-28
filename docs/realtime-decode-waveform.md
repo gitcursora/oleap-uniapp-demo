@@ -49,7 +49,7 @@ const REALTIME_DECODE_BATCH_FRAMES = 12  // 每 12 帧（≈480ms）解码一次
 #### RecordingSession 新增字段
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `realtimeDecode` | `boolean` | 是否启用实时解码 |
+| `enableRealtimeStream` | `boolean` | 是否启用实时解码 |
 | `realtimeFormat` | `string` | 输出格式（仅支持 wav） |
 | `realtimeDecoder` | `OpusDecoder?` | 解码器实例 |
 | `realtimeOutputPath` | `string` | 输出文件路径 |
