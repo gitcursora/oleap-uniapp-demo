@@ -1559,13 +1559,13 @@ async function loadDeviceStatus() {
 /**
  * 开始实时录音。
  * scene 用来告诉耳机当前录音场景。
- * enableRealtimeStream 开启后边录边解码，录音结束无需等待解码。
+ * enableRealtimeStream 开启后边录边处理音频流，录音结束无需等待解码。
  */
 const started = await OleapBle.startRecording({
   scene: 'personal',
-  enableRealtimeStream: false,      // 可选，是否启用实时解码，默认 false（批量解码）
-  format: 'wav',              // 实时解码时必须是 wav
-  realtimeBatchFrames: 25     // 可选，实时解码每批帧数，默认 25（约 1 秒）
+  enableRealtimeStream: false,      // 可选，是否启用实时音频流，默认 false（批量解码）
+  format: 'wav',              // 实时音频流时必须是 wav
+  realtimeBatchFrames: 25     // 可选，实时音频流每批帧数，默认 25（约 1 秒）
 })
 
 console.log('录音会话', started.sessionId)
@@ -1575,9 +1575,9 @@ console.log('解码模式', started.decodeMode)  // 'realtime' 或 'batch'
 参数：
 
 - `scene`：录音场景，可选 `personal`、`call`、`media`、`ambient`。
-- `enableRealtimeStream`：可选，是否启用实时解码模式，默认 `false`。启用后录音过程中边解码边写入 WAV 文件，停止录音后无需等待解码。
-- `format`：可选，输出格式，可选 `wav`、`mp3`，默认 `wav`。实时解码模式下只支持 `wav`。
-- `realtimeBatchFrames`：可选，实时解码每批积累的帧数，默认 `25`（约 1 秒触发一次解码）。值越小响应越快，建议范围 `10`–`50`。
+- `enableRealtimeStream`：可选，是否启用实时音频流模式，默认 `false`。启用后录音过程中边处理音频流边写入 WAV 文件，停止录音后无需等待解码。
+- `format`：可选，输出格式，可选 `wav`、`mp3`，默认 `wav`。实时音频流模式下只支持 `wav`。
+- `realtimeBatchFrames`：可选，实时音频流每批积累的帧数，默认 `25`（约 1 秒触发一次解码）。值越小响应越快，建议范围 `10`–`50`。
 
 返回：
 
@@ -1587,7 +1587,7 @@ console.log('解码模式', started.decodeMode)  // 'realtime' 或 'batch'
 
 - 必须先连接耳机。
 - 同一时间只能有一个实时录音会话。
-- 实时解码仅支持 Android，iOS 不支持。
+- 实时音频流仅支持 Android，iOS 不支持。
 - 如果页面离开时仍在录音，建议提示用户先停止录音。
 
 #### stopRecording(options)
@@ -1993,7 +1993,7 @@ const dispose = OleapBle.onDecodeProgress((event) => {
 
 ```js
 /**
- * 监听实时解码的波形样本数据，用于绘制波形图。
+ * 监听实时音频流的波形样本数据，用于绘制波形图。
  * 每批解码完成后触发一次（默认约 1 秒）。
  * 仅在 startRecording 传入 enableRealtimeStream: true 时有效。
  */
@@ -2021,7 +2021,7 @@ onUnmounted(() => dispose())
 
 ```js
 /**
- * 监听实时解码的 PCM 原始数据，用于 ASR 等需要原始音频的场景。
+ * 监听实时音频流的 PCM 原始数据，用于 ASR 等需要原始音频的场景。
  * 仅在 startRecording 传入 enableRealtimeStream: true 时有效。
  *
  * perFrame 默认 false（按批次回调，约 1 秒一次）。
@@ -2060,7 +2060,7 @@ onUnmounted(() => dispose())
 
 注意：
 
-- 仅 Android 支持，iOS 不支持实时解码。
+- 仅 Android 支持，iOS 不支持实时音频流。
 - 没有注册监听器时不会做 base64 编码，不影响录音性能。
 - 发给 ASR 接口时通常需要告知 `encoding=LINEAR16`、`sampleRate=16000`、`channels=1`。
 
@@ -2165,8 +2165,8 @@ OleapBle.clearDiagnostics()
 | `onDpReport(callback)` | 订阅 | 监听设备主动上报 | 设备状态页 |
 | `onRecordingProgress(callback)` | 订阅 | 监听录音或 Flash 进度 | 录音页 / Flash 页 |
 | `onDecodeProgress(callback)` | 订阅 | 监听解码进度 | 录音页 / Flash 页 |
-| `onWaveformData(callback)` | 订阅 | 监听实时解码波形样本，用于波形图绘制 | 实时录音页 |
-| `onRealtimePcmData(callback, perFrame?)` | 订阅 | 监听实时解码 PCM 数据，用于 ASR 等 | 实时录音页 |
+| `onWaveformData(callback)` | 订阅 | 监听实时音频流波形样本，用于波形图绘制 | 实时录音页 |
+| `onRealtimePcmData(callback, perFrame?)` | 订阅 | 监听实时音频流 PCM 数据，用于 ASR 等 | 实时录音页 |
 | `onError(callback)` | 订阅 | 监听 SDK 错误事件 | 所有调试页面 |
 | `getDiagnostics()` | 同步 | 获取 SDK 诊断信息 | 调试面板 |
 | `clearDiagnostics()` | 同步 | 清空 SDK 诊断信息 | 调试面板 |

@@ -409,7 +409,7 @@ class RecordingSession {
   downloadedBytes: number = 0
   progress: number = 0
 
-  // 实时解码相关字段
+  // 实时音频流相关字段
   enableRealtimeStream: boolean = false
   realtimeFormat: string = 'wav'
   enableRealtimeStreamr: OpusDecoder | null = null
@@ -2792,7 +2792,7 @@ function closeRecordingSessionStreams(session: RecordingSession | null): void {
   session.opusRawStream = null
   session.framesStream = null
 
-  // 关闭实时解码流
+  // 关闭实时音频流
   if (session.enableRealtimeStream) {
     try {
       closeOutputStream(session.realtimeOutputStream)
@@ -3624,7 +3624,7 @@ function appendRecordingFramesToSession(session: RecordingSession, response: Rec
     }
   }
 
-  // 实时解码逻辑 - 批量累积帧后再解码
+  // 实时音频流解码 - 批量累积帧后解码
   if (session.enableRealtimeStream) {
     const decoder = session.enableRealtimeStreamr
     const outputStream = session.realtimeOutputStream
@@ -3955,7 +3955,7 @@ function handleRecordingStartResponse(response: RecordingResponse): void {
   try {
     const session = createRecordingSession(request.scene, response)
 
-    // 检查是否启用实时解码
+    // 检查是否启用实时音频流
     const enableRealtimeStream = optionBoolean(request.options, 'enableRealtimeStream', false)
     const format = requestedRecordingFormatOf(request.options)
 
@@ -4040,7 +4040,7 @@ function handleRecordingStopResponse(response: RecordingResponse): void {
   try {
     let result: RecordingResult
     if (session.enableRealtimeStream) {
-      // 使用实时解码结果
+      // 使用实时音频流解码结果
       result = finalizeRealtimeDecoding(session)
       pushDiagnostic('realtime_decode_completed', {
         sessionId: session.sessionId,

@@ -1,8 +1,8 @@
-# 实时解码与音频波形图
+# 实时音频流与波形图
 
 ## 概览
 
-在原有**批量解码**（录音结束后统一解码）的基础上，新增了**实时解码**模式：录音过程中每积累一定帧数就立即解码，并将 PCM 数据转换为波形图实时展示。
+在原有**批量解码**（录音结束后统一解码）的基础上，新增了**实时音频流**模式：录音过程中每积累一定帧数就立即解码，并将 PCM 数据转换为波形图实时展示。
 
 ---
 
@@ -14,7 +14,7 @@ BLE 音频帧
   ▼
 appendRecordingFramesToSession()
   │  批量解码模式：写入 .oleapframes 文件
-  │  实时解码模式：同时维护 realtimePendingFrames 队列
+  │  实时音频流模式：同时维护 realtimePendingFrames 队列
   │
   ▼（积累 12 帧 ≈ 480ms）
 批量 Opus 解码
@@ -49,7 +49,7 @@ const REALTIME_DECODE_BATCH_FRAMES = 12  // 每 12 帧（≈480ms）解码一次
 #### RecordingSession 新增字段
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `enableRealtimeStream` | `boolean` | 是否启用实时解码 |
+| `enableRealtimeStream` | `boolean` | 是否启用实时音频流 |
 | `realtimeFormat` | `string` | 输出格式（仅支持 wav） |
 | `realtimeDecoder` | `OpusDecoder?` | 解码器实例 |
 | `realtimeOutputPath` | `string` | 输出文件路径 |
@@ -134,7 +134,7 @@ export const onWaveformData = OleapBle.onWaveformData.bind(OleapBle)
 ### `pages/record/record.vue`
 
 #### 新增 UI
-- **解码方式选择**：批量解码 / 实时解码
+- **解码方式选择**：批量解码 / 实时音频流
 - **解码模式标识**：绿色（实时）/ 蓝色（批量）
 - **波形图面板**：录音中或录音完成后显示
 
@@ -173,6 +173,6 @@ this.$refs.waveform.stopAnimation()
 
 ## 限制
 
-- 实时解码仅支持 **Android**（iOS 的 `opus2wav` 是 native 一次性处理，无法逐帧调用）
-- 实时解码仅支持 **WAV** 格式（MP3 需要编码器，不适合逐帧输出）
-- Flash 下载录音不支持实时解码
+- 实时音频流仅支持 **Android**（iOS 的 `opus2wav` 是 native 一次性处理，无法逐帧调用）
+- 实时音频流仅支持 **WAV** 格式（MP3 需要编码器，不适合逐帧输出）
+- Flash 下载录音不支持实时音频流

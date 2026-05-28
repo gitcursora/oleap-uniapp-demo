@@ -58,7 +58,7 @@
         </button>
       </view>
       <view v-if="decodeMode === 'realtime' && format !== 'wav'" class="muted hint-text">
-        实时解码仅支持 WAV 格式
+        实时音频流仅支持 WAV 格式
       </view>
 
       <view class="button-row action-row">
@@ -224,7 +224,7 @@ export default {
       ],
       decodeModeOptions: [
         { label: '批量解码', value: 'batch' },
-        { label: '实时解码', value: 'realtime' }
+        { label: '实时音频流', value: 'realtime' }
       ],
       active: false,
       busy: false,
@@ -292,11 +292,11 @@ export default {
     },
     decodeModeLabel() {
       if (!this.active && !this.result) {
-        return this.decodeMode === 'realtime' ? '实时解码' : '批量解码'
+        return this.decodeMode === 'realtime' ? '实时音频流' : '批量解码'
       }
       // 录音中或已完成，显示实际使用的模式
       if (this.decode.phase === 'realtime' || this.decode.phase === 'decoding') {
-        return '实时解码'
+        return '实时音频流'
       }
       return '批量解码'
     },
