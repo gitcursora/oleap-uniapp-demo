@@ -1563,7 +1563,7 @@ async function loadDeviceStatus() {
  */
 const started = await OleapBle.startRecording({
   scene: 'personal',
-  enableRealtimeStream: false,      // 可选，是否启用实时音频流，默认 false（批量解码）
+  enableRealtimeStream: true,      // 可选，是否启用实时音频流，默认 false（批量解码）
   format: 'wav',              // 实时音频流时必须是 wav
   realtimeBatchFrames: 25     // 可选，实时音频流每批帧数，默认 25（约 1 秒）
 })
