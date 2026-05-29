@@ -296,6 +296,7 @@ OleapBle.stopFlashDownload()
 OleapBle.onDeviceFound(callback)
 OleapBle.onConnectionChanged(callback)
 OleapBle.onDpReport(callback)
+OleapBle.onShortcutKey(callback)
 OleapBle.onRecordingProgress(callback)
 OleapBle.onDecodeProgress(callback)
 OleapBle.onError(callback)
@@ -401,13 +402,14 @@ Dp_data nB
 | `0x84` | 历史连接设备 | optional |
 | `0x85` | 删除历史连接 | optional |
 | `0x86` | 通话降噪 | optional |
-| `0x87` | Flash 编码率 | optional |
+| `0x87` | 特殊固件快捷键 | `onShortcutKey`, `onDpReport` |
 
 主动上报：
 
 - 解析 `CMD=0x11`。
 - 更新 DP snapshot。
 - 发布 `onDpReport`。
+- 对 `0x87` 快捷键主动上报额外发布 `onShortcutKey`，SDK 不自动触发录音等业务动作。
 - 对设备上报发送 ACK。
 - ACK 失败不重发业务命令，只记录诊断。
 

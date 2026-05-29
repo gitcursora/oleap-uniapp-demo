@@ -912,8 +912,8 @@ export default {
 
 ```js
 {
-  dpId: 1,
-  name: 'battery',
+  dpId: 3,
+  name: 'batteryPercentage',
   value: 86,
   timestamp: '2026-05-23T06:30:00.000Z'
 }
@@ -922,9 +922,29 @@ export default {
 字段说明：
 
 - `dpId`：协议里的 DP 编号。
-- `name`：SDK 解析后的字段名，例如 `battery`、`sn`、`eqMode`。
+- `name`：SDK 解析后的字段名，例如 `batteryPercentage`、`sn`、`eqMode`、`shortcutKey`。
 - `value`：解析后的值，可能是数字、字符串或对象。
 - `timestamp`：SDK 收到上报的时间。
+
+#### OleapShortcutKeyEvent
+
+特殊固件的快捷键主动上报事件，来自 DP `0x87` / `135`。
+
+```js
+{
+  dpId: 135,
+  name: 'shortcutKey',
+  value: {
+    raw: [1]
+  },
+  source: 'report',
+  timestamp: '2026-05-23T06:30:00.000Z'
+}
+```
+
+字段说明：
+
+- `raw`：快捷键 DP 原始值。SDK 不解释字节含义，业务层可按固件协议自行映射。
 
 #### OleapEqModeStatus
 
@@ -1945,6 +1965,29 @@ const dispose = OleapBle.onDpReport((report) => {
 - 设备状态页。
 - 需要实时感知耳机状态变化的业务页。
 
+#### onShortcutKey(callback)
+
+```js
+/**
+ * 监听特殊固件快捷键主动上报。
+ * SDK 只发布事件，不会自动启动或停止录音。
+ */
+const dispose = OleapBle.onShortcutKey(async (event) => {
+  console.log(event.value.raw)
+
+  // 业务层按需决定是否启动录音，并自行做防重复触发保护。
+  await OleapBle.startRecording({ scene: 'personal' })
+})
+```
+
+回调参数：
+
+- `OleapShortcutKeyEvent`。
+
+常用页面：
+
+- 需要把耳机快捷键映射成业务动作的页面。
+
 #### onRecordingProgress(callback)
 
 ```js
@@ -2163,6 +2206,7 @@ OleapBle.clearDiagnostics()
 | `onDeviceFound(callback)` | 订阅 | 监听扫描结果 | 首页 |
 | `onConnectionChanged(callback)` | 订阅 | 监听连接变化 | 所有业务页 |
 | `onDpReport(callback)` | 订阅 | 监听设备主动上报 | 设备状态页 |
+| `onShortcutKey(callback)` | 订阅 | 监听特殊固件快捷键主动上报 | 录音页 / 业务页 |
 | `onRecordingProgress(callback)` | 订阅 | 监听录音或 Flash 进度 | 录音页 / Flash 页 |
 | `onDecodeProgress(callback)` | 订阅 | 监听解码进度 | 录音页 / Flash 页 |
 | `onWaveformData(callback)` | 订阅 | 监听实时音频流波形样本，用于波形图绘制 | 实时录音页 |

@@ -134,7 +134,9 @@ for (const text of [
 for (const text of [
   'sceneOptions',
   'formatOptions',
-  "OleapBle.startRecording({ scene: this.scene })",
+  'OleapBle.startRecording({',
+  'scene: this.scene',
+  'enableRealtimeStream: enableRealtimeStream',
   "OleapBle.stopRecording({ format: this.format })",
   'decodePercent',
   'badFrames',
@@ -166,6 +168,8 @@ for (const text of [
   'channelLabel',
   'connectedDeviceId',
   'OleapBle.onDpReport',
+  'OleapBle.onShortcutKey',
+  'uni.showToast',
   'refreshOleapDiagnostics'
 ]) {
   mustContain(devicePage, text, 'device diagnostics workflow')

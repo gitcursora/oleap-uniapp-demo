@@ -8,6 +8,7 @@ import { OleapBleNativeError } from '../unierror.uts'
 type NativeDeviceFoundCallback = (device: any) => void
 type NativeConnectionCallback = (event: any) => void
 type NativeDpCallback = (event: any) => void
+type NativeShortcutKeyCallback = (event: any) => void
 type NativeProgressCallback = (event: any) => void
 type NativeErrorCallback = (event: any) => void
 
@@ -55,6 +56,7 @@ const DP_ID_APP_TIME = 0x7e
 const DP_ID_FLASH_CAPACITY = 0x7f
 const DP_ID_SN = 0x80
 const DP_ID_EQ_MODE = 0x81
+const DP_ID_SHORTCUT_KEY = 0x87
 const FLASH_BLOCK_BYTES = 32 * 1024
 const RECORDING_COMMAND_STOP = 0x0081
 const RECORDING_COMMAND_PERSONAL = 0x0181
@@ -104,6 +106,7 @@ const controlTransactionQueue = new Array<any>()
 const deviceFoundCallbacks = new Set<NativeDeviceFoundCallback>()
 const connectionCallbacks = new Set<NativeConnectionCallback>()
 const dpCallbacks = new Set<NativeDpCallback>()
+const shortcutKeyCallbacks = new Set<NativeShortcutKeyCallback>()
 const recordingProgressCallbacks = new Set<NativeProgressCallback>()
 const decodeProgressCallbacks = new Set<NativeProgressCallback>()
 const errorCallbacks = new Set<NativeErrorCallback>()
@@ -486,7 +489,14 @@ function dpNameOf(dpId: number): string {
   if (dpId == DP_ID_FLASH_CAPACITY) return 'flashCapacity'
   if (dpId == DP_ID_SN) return 'sn'
   if (dpId == DP_ID_EQ_MODE) return 'eqMode'
+  if (dpId == DP_ID_SHORTCUT_KEY) return 'shortcutKey'
   return `dp_${dpId}`
+}
+
+function decodeShortcutKeyValue(raw: Array<number>): any {
+  return {
+    raw
+  }
 }
 
 function decodeDpValue(dp: any): any {
@@ -529,6 +539,7 @@ function decodeDpValue(dp: any): any {
       raw
     }
   }
+  if (dpId == DP_ID_SHORTCUT_KEY) return decodeShortcutKeyValue(raw)
   if (dp.typeCode == DP_TYPE_BOOL) return raw.length > 0 && raw[0] != 0
   if (dp.typeCode == DP_TYPE_NUMBER || dp.typeCode == DP_TYPE_ENUM) return readFlexibleInt(dpId, raw)
   if (dp.typeCode == DP_TYPE_STRING) return utf8Decode(raw)
@@ -549,6 +560,18 @@ function normalizeDp(dp: any): any {
   }
 }
 
+function emitShortcutKey(event: any): void {
+  pushDiagnostic('shortcut_key_report', {
+    dpId: event.dpId,
+    name: event.name,
+    source: event.source,
+    valueLength: event.rawValue.length
+  })
+  shortcutKeyCallbacks.forEach((callback) => {
+    callback(event)
+  })
+}
+
 function storeAndEmitDp(dp: any, source: string): any {
   const event = normalizeDp(dp)
   event.source = source
@@ -562,6 +585,9 @@ function storeAndEmitDp(dp: any, source: string): any {
   dpCallbacks.forEach((callback) => {
     callback(event)
   })
+  if (event.dpId == DP_ID_SHORTCUT_KEY && source == 'report') {
+    emitShortcutKey(event)
+  }
   return event
 }
 
@@ -2318,6 +2344,13 @@ export function onDpReport(callback: NativeDpCallback): () => void {
   dpCallbacks.add(callback)
   return () => {
     dpCallbacks.delete(callback)
+  }
+}
+
+export function onShortcutKey(callback: NativeShortcutKeyCallback): () => void {
+  shortcutKeyCallbacks.add(callback)
+  return () => {
+    shortcutKeyCallbacks.delete(callback)
   }
 }
 

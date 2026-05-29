@@ -89,6 +89,7 @@ for (const text of [
   'CONTROL_CMD_DP_QUERY',
   'CONTROL_CMD_DP_SEND',
   'CONTROL_CMD_DP_WRITE',
+  'DP_ID_SHORTCUT_KEY',
   'controlCrc32',
   'encodeControlFrame',
   'decodeControlFrame',
@@ -96,6 +97,7 @@ for (const text of [
   'decodeControlPayload',
   'encodeDataPoint',
   'decodeDataPoint',
+  'decodeShortcutKeyValue',
   'queryDp',
   'writeDp',
   'enqueueControlTransaction',
@@ -109,7 +111,9 @@ for (const text of [
   'control_response_matched',
   'control_timeout',
   'control_write_rejected',
-  'onDpReport'
+  'shortcut_key_report',
+  'onDpReport',
+  'onShortcutKey'
 ]) {
   mustContain(iosIndex, text, 'iOS control protocol implementation')
 }
@@ -123,6 +127,8 @@ for (const text of [
 ]) {
   mustContain(iosIndex, text, 'iOS control public API wiring')
 }
+mustNotContain(iosIndex, 'shortcutCode', 'unconfirmed shortcut key semantic field')
+mustNotContain(iosIndex, 'pressType', 'unconfirmed shortcut key semantic field')
 
 for (const text of [
   'ios_flash_not_ready',
@@ -213,6 +219,7 @@ const fixtures = {
   queryBattery: readHexFixture('control/query_battery.hex'),
   writeEq: readHexFixture('control/write_eq_high_bass.hex'),
   reportBattery: readHexFixture('control/report_battery.hex'),
+  reportShortcutKey: readHexFixture('control/report_shortcut_key.hex'),
   startPersonal: readHexFixture('recording/start_personal.hex'),
   stopRecording: readHexFixture('recording/stop_recording.hex'),
   startResponse: readHexFixture('recording/start_response_success.hex'),
@@ -239,6 +246,14 @@ assert(report.payload.askSn === 0, 'battery report fixture must be active report
 const reportDp = decodeDp(report.payload.commandPayload.slice(4))
 assert(reportDp.id === 0x03, 'battery report fixture must target DP 0x03')
 assert(reportDp.type === 0x02, 'battery report fixture must use number type')
+
+const shortcutReport = decodeFrame(fixtures.reportShortcutKey)
+assert(shortcutReport.payload.command === 0x11, 'shortcut key report fixture must be dp send')
+assert(shortcutReport.payload.askSn === 0, 'shortcut key report fixture must be active report')
+const shortcutDp = decodeDp(shortcutReport.payload.commandPayload.slice(4))
+assert(shortcutDp.id === 0x87, 'shortcut key report fixture must target DP 0x87')
+assert(shortcutDp.type === 0x04, 'shortcut key report fixture must use enum type')
+assert(shortcutDp.raw.length === 1 && shortcutDp.raw[0] === 0x01, 'shortcut key report fixture value must be 0x01')
 
 assertBytesEqual(buildRecordingCommand(0x0181, [0]), fixtures.startPersonal, 'iOS start personal command mismatch')
 assertBytesEqual(buildRecordingCommand(0x0081, [1]), fixtures.stopRecording, 'iOS stop recording command mismatch')

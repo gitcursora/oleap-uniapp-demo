@@ -38,9 +38,30 @@ export type OleapPermissionResult = {
 
 export type OleapDpReport = {
   dpId: number
+  id?: number
   name: string
+  typeCode?: number
+  rawValue?: Array<number>
+  raw?: Array<number>
   value: any
   timestamp: string
+  source?: string
+}
+
+export type OleapShortcutKeyValue = {
+  raw: Array<number>
+}
+
+export type OleapShortcutKeyEvent = {
+  dpId: number
+  id?: number
+  name: 'shortcutKey'
+  typeCode?: number
+  rawValue?: Array<number>
+  raw?: Array<number>
+  value: OleapShortcutKeyValue
+  timestamp: string
+  source?: string
 }
 
 export type OleapEqModeStatus = {
@@ -142,6 +163,7 @@ export declare function stopFlashDownload(): Promise<void>
 export declare function onDeviceFound(callback: OleapBleCallback<OleapDevice>): OleapBleUnsubscribe
 export declare function onConnectionChanged(callback: OleapBleCallback<OleapConnectionState>): OleapBleUnsubscribe
 export declare function onDpReport(callback: OleapBleCallback<OleapDpReport>): OleapBleUnsubscribe
+export declare function onShortcutKey(callback: OleapBleCallback<OleapShortcutKeyEvent>): OleapBleUnsubscribe
 export declare function onRecordingProgress(callback: OleapBleCallback<OleapRecordingProgress>): OleapBleUnsubscribe
 export declare function onDecodeProgress(callback: OleapBleCallback<OleapDecodeProgress>): OleapBleUnsubscribe
 export declare function onError(callback: OleapBleCallback<OleapBleError>): OleapBleUnsubscribe

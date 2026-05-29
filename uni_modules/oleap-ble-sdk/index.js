@@ -359,6 +359,10 @@ export const OleapBle = {
     return nativeSubscribe('onDpReport', callback)
   },
 
+  onShortcutKey(callback) {
+    return nativeSubscribe('onShortcutKey', callback)
+  },
+
   onRecordingProgress(callback) {
     return nativeSubscribe('onRecordingProgress', callback)
   },
@@ -440,6 +444,7 @@ export const stopFlashDownload = OleapBle.stopFlashDownload.bind(OleapBle)
 export const onDeviceFound = OleapBle.onDeviceFound.bind(OleapBle)
 export const onConnectionChanged = OleapBle.onConnectionChanged.bind(OleapBle)
 export const onDpReport = OleapBle.onDpReport.bind(OleapBle)
+export const onShortcutKey = OleapBle.onShortcutKey.bind(OleapBle)
 export const onRecordingProgress = OleapBle.onRecordingProgress.bind(OleapBle)
 export const onDecodeProgress = OleapBle.onDecodeProgress.bind(OleapBle)
 export const onWaveformData = OleapBle.onWaveformData.bind(OleapBle)
