@@ -148,7 +148,7 @@ const requiredGattStrings = [
   'BluetoothProfile.STATE_CONNECTED',
   'BluetoothProfile.STATE_DISCONNECTED',
   'BluetoothGatt.GATT_SUCCESS',
-  'connectGatt(context, false, callback)',
+  'connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)',
   'discoverServices()',
   'discoveryStarted',
   'onServicesDiscovered',

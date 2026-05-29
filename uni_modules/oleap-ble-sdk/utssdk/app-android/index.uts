@@ -26,6 +26,7 @@ import { OleapBleNativeError } from '../unierror.uts'
 type NativeDeviceFoundCallback = (device: any) => void
 type NativeConnectionCallback = (event: any) => void
 type NativeDpCallback = (event: any) => void
+type NativeShortcutKeyCallback = (event: any) => void
 type NativeProgressCallback = (event: any) => void
 type NativeErrorCallback = (event: any) => void
 
@@ -83,6 +84,7 @@ const DP_ID_APP_TIME = 0x7e
 const DP_ID_FLASH_CAPACITY = 0x7f
 const DP_ID_SN = 0x80
 const DP_ID_EQ_MODE = 0x81
+const DP_ID_SHORTCUT_KEY = 0x87
 const FLASH_BLOCK_BYTES = 32 * 1024
 
 const RECORDING_COMMAND_STOP = 0x0081
@@ -630,6 +632,7 @@ let pendingConnectReject: ((error: OleapBleNativeError) => void) | null = null
 const deviceFoundCallbacks = new Set<NativeDeviceFoundCallback>()
 const connectionCallbacks = new Set<NativeConnectionCallback>()
 const dpCallbacks = new Set<NativeDpCallback>()
+const shortcutKeyCallbacks = new Set<NativeShortcutKeyCallback>()
 const recordingProgressCallbacks = new Set<NativeProgressCallback>()
 const decodeProgressCallbacks = new Set<NativeProgressCallback>()
 const waveformDataCallbacks = new Set<NativeProgressCallback>()
@@ -1994,7 +1997,14 @@ function dpNameOf(dpId: number): string {
   if (dpId == DP_ID_FLASH_CAPACITY) return 'flashCapacity'
   if (dpId == DP_ID_SN) return 'sn'
   if (dpId == DP_ID_EQ_MODE) return 'eqMode'
+  if (dpId == DP_ID_SHORTCUT_KEY) return 'shortcutKey'
   return `dp_${dpId}`
+}
+
+function decodeShortcutKeyValue(raw: Array<number>): any {
+  return {
+    raw
+  }
 }
 
 function decodeDpValue(dp: DataPoint): any {
@@ -2045,6 +2055,9 @@ function decodeDpValue(dp: DataPoint): any {
       raw
     }
   }
+  if (dpId == DP_ID_SHORTCUT_KEY) {
+    return decodeShortcutKeyValue(raw)
+  }
   if (dp.typeCode == DP_TYPE_BOOL) {
     return raw.length > 0 && raw[0] != 0
   }
@@ -2062,6 +2075,18 @@ function normalizeDp(dp: DataPoint): DpEvent {
   return new DpEvent(dp, dpNameOf(dp.id), value)
 }
 
+function emitShortcutKey(event: DpEvent): void {
+  pushDiagnostic('shortcut_key_report', {
+    dpId: event.dpId,
+    name: event.name,
+    source: event.source,
+    valueLength: event.rawValue.length
+  })
+  shortcutKeyCallbacks.forEach((callback) => {
+    callback(event)
+  })
+}
+
 function storeAndEmitDp(dp: DataPoint, source: string): DpEvent {
   const event = normalizeDp(dp)
   event.source = source
@@ -2075,6 +2100,9 @@ function storeAndEmitDp(dp: DataPoint, source: string): DpEvent {
   dpCallbacks.forEach((callback) => {
     callback(event)
   })
+  if (event.dpId == DP_ID_SHORTCUT_KEY && source == 'report') {
+    emitShortcutKey(event)
+  }
   return event
 }
 
@@ -5253,6 +5281,14 @@ export function onDpReport(callback: NativeDpCallback): () => void {
   dpCallbacks.add(callback)
   return () => {
     dpCallbacks.delete(callback)
+  }
+}
+
+@UTSJS.keepAlive
+export function onShortcutKey(callback: NativeShortcutKeyCallback): () => void {
+  shortcutKeyCallbacks.add(callback)
+  return () => {
+    shortcutKeyCallbacks.delete(callback)
   }
 }
 

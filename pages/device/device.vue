@@ -192,6 +192,12 @@ export default {
         OleapBle.onDpReport((report) => {
           this.reports.unshift(report)
           this.reports = this.reports.slice(0, 8)
+        }),
+        OleapBle.onShortcutKey((event) => {
+          uni.showToast({
+            title: '触发静音快捷键',
+            icon: 'none'
+          })
         })
       )
       this.refreshDiagnostics()

@@ -151,11 +151,17 @@ Android native 当前已能查询文件数量、读取文件信息、连续下�
 
 ```js
 const offDp = OleapBle.onDpReport((report) => {})
+const offShortcut = OleapBle.onShortcutKey((event) => {
+  // event.dpId === 135, event.name === 'shortcutKey'
+  // SDK only reports the shortcut key event. Business code decides whether to start recording.
+  console.log(event.value.raw)
+})
 const offRecord = OleapBle.onRecordingProgress((event) => {})
 const offDecode = OleapBle.onDecodeProgress((event) => {})
 const offError = OleapBle.onError((error) => {})
 
 offDp()
+offShortcut()
 offRecord()
 offDecode()
 offError()
